@@ -393,10 +393,33 @@ async def suppress_contact(
         return None
 
 
-# Module-level aliases for backwards compatibility
+# Backwards compatibility aliases (do not alias 'list' to avoid shadowing Python's built-in list)
 create = create_contact
 get = get_contact
-list = list_contacts
 update = update_contact
 delete = delete_contact
 suppress = suppress_contact
+
+
+class ContactService:
+    def __init__(self, db: AsyncIOMotorDatabase):
+        self.db = db
+
+    async def create(self, data: Dict[str, Any], user_id: Optional[str] = None) -> Tuple[Dict[str, Any], bool]:
+        return await create_contact(self.db, data, user_id)
+
+    async def get_by_id(self, contact_id: str) -> Optional[Dict]:
+        return await get_contact(self.db, contact_id)
+
+    async def list(self, skip: int = 0, limit: int = 20, **kwargs) -> Tuple[List[Dict], int]:
+        return await list_contacts(self.db, skip=skip, limit=limit, **kwargs)
+
+    async def update(self, contact_id: str, data: Dict[str, Any]) -> Optional[Dict]:
+        return await update_contact(self.db, contact_id, data)
+
+    async def delete(self, contact_id: str) -> bool:
+        return await delete_contact(self.db, contact_id)
+
+    async def suppress(self, contact_id: str, reason: str = "Do-not-contact request") -> Optional[Dict]:
+        return await suppress_contact(self.db, contact_id, reason)
+

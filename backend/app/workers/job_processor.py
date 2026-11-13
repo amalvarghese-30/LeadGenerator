@@ -17,7 +17,10 @@ from app.database.connection import connect_to_mongo, close_mongo_connection, ge
 from app.discovery.discovery_manager import DiscoveryManager
 from app.crawler.crawler_manager import CrawlerManager
 from app.extraction.client_classifier import ClientClassifier
-from app.crm import contact_service, company_service, reference_service, lead_service
+from app.crm.reference_service import ReferenceService
+from app.crm.contact_service import ContactService
+from app.crm.company_service import CompanyService
+from app.crm.lead_service import LeadService
 from app.enrichment.contact_enrichment_service import ContactEnrichmentService
 
 logging.basicConfig(
