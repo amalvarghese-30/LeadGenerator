@@ -391,3 +391,12 @@ async def suppress_contact(
         return _doc_to_dict(result)
     except Exception:
         return None
+
+
+# Module-level aliases for backwards compatibility
+create = create_contact
+get = get_contact
+list = list_contacts
+update = update_contact
+delete = delete_contact
+suppress = suppress_contact
