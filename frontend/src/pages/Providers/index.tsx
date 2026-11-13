@@ -248,7 +248,7 @@ export const Providers: React.FC = () => {
                             : 'default'
                         }
                       >
-                        {p.category.replace(/_/g, ' ')}
+                        {p.category ? p.category.replace(/_/g, ' ') : '—'}
                       </Badge>
                     </td>
                     <td className="py-3.5 px-4 text-slate-600">
@@ -262,7 +262,7 @@ export const Providers: React.FC = () => {
                     </td>
                     <td className="py-3.5 px-4 max-w-xs">
                       <div className="flex flex-wrap gap-1">
-                        {p.services.slice(0, 3).map((s) => (
+                        {(p.services || []).slice(0, 3).map((s) => (
                           <span
                             key={s}
                             className="bg-slate-100 text-slate-700 px-1.5 py-0.5 rounded text-[10px] truncate"
@@ -270,8 +270,11 @@ export const Providers: React.FC = () => {
                             {s}
                           </span>
                         ))}
-                        {p.services.length > 3 && (
+                        {p.services && p.services.length > 3 && (
                           <span className="text-[10px] text-slate-400">+{p.services.length - 3}</span>
+                        )}
+                        {(!p.services || p.services.length === 0) && (
+                          <span className="text-slate-400 text-xs">—</span>
                         )}
                       </div>
                     </td>

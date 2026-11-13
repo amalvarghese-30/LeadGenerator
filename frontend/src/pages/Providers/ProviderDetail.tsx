@@ -135,7 +135,7 @@ export const ProviderDetail: React.FC = () => {
             <div className="flex items-center gap-2">
               <h1 className="text-xl font-bold text-slate-900 tracking-tight">{provider.name}</h1>
               <Badge variant={provider.category === 'direct_competitor' ? 'info' : 'default'}>
-                {provider.category.replace(/_/g, ' ')}
+                {provider.category ? provider.category.replace(/_/g, ' ') : '—'}
               </Badge>
             </div>
             <div className="flex items-center gap-3 text-xs text-slate-500 mt-1">
