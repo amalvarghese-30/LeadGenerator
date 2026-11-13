@@ -444,14 +444,6 @@ class JobProcessor:
         await db.research_reports.replace_one(
             {"job_id": job_id}, report, upsert=True,
         )
-                {"url": p.get("url"), "error": p.get("error")}
-                for p in failed_pages
-            ],
-            "generated_at": datetime.utcnow(),
-        }
-        await db.research_reports.replace_one(
-            {"job_id": job_id}, report, upsert=True,
-        )
 
     # ------------------------------------------------------------------
     async def run(self):
