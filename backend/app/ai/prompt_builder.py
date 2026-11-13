@@ -97,7 +97,7 @@ class PromptBuilder:
             f"{safe_text}\n"
             f"--- END UNTRUSTED CONTENT ---\n\n"
             f"Extract all professional client relationships from the content above. "
-            f"Return ONLY valid JSON."
+            f"Return ONLY a JSON object with key 'entities': [{...}] matching the schema exactly."
         )
 
         return {"system": system_content, "user": user_content}

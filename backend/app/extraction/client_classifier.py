@@ -16,7 +16,7 @@ Every persisted record has verification_status = "pending". AI cannot self-verif
 """
 import logging
 from datetime import datetime
-from typing import Dict, List, Any, Tuple
+from typing import Dict, List, Any, Tuple, Optional
 
 from app.ai.nvidia_client import NvidiaClient
 from app.extraction.evidence_validator import EvidenceValidator, CLIENT_CUSTOMER_RELATIONSHIPS
@@ -102,6 +102,12 @@ class ClientClassifier:
             ref["collected_at"] = datetime.utcnow().isoformat()
             ref["verification_status"] = "pending"
 
+            # If page is a Published Client Profile, classify featured client as published_customer_profile
+            if page_meta.get("page_category") == "Published Client Profile" and ref.get("relationship_type") in (
+                "ordinary_mention", "featured_personality", "unclear_relationship"
+            ):
+                ref["relationship_type"] = "published_customer_profile"
+
             # Check evidence validity
             is_valid, rejection_reasons = self.evidence_validator.validate(ref, source_text=text)
 
@@ -134,17 +140,17 @@ class ClientClassifier:
         )
         return valid_references, rejected_candidates, page_meta
 
-    def _merge(self, det: List[Dict], ai: List[Dict], url: str) -> List[Dict]:
+    def _merge(self, det: Optional[List[Dict]], ai: Optional[List[Dict]], url: str) -> List[Dict]:
         """Merge deterministic and AI results, prioritizing deterministic evidence."""
         by_key: Dict[str, Dict] = {}
 
-        for ref in det:
+        for ref in (det or []):
             key = (ref.get("person_name") or f"comp:{ref.get('company_name')}" or "").lower()
             if not key:
                 continue
             by_key[key] = dict(ref)
 
-        for ref in ai:
+        for ref in (ai or []):
             person = ref.get("person_name")
             comp = ref.get("company_name")
             key = (person or f"comp:{comp}" or "").lower()

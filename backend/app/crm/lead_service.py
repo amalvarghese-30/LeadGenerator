@@ -227,7 +227,7 @@ class LeadService:
             "lead_source": lead_source,
             "crm_stage": initial_stage,
         }
-        doc, was_created = await create_lead(self.db, data, user_id)
+        doc, was_created = await create_lead_with_status(self.db, data, user_id)
         return LeadResult(lead_dict=doc, created=was_created)
 
     async def get_by_id(self, lead_id: str) -> Optional[Dict]:

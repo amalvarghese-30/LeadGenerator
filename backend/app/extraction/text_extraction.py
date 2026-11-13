@@ -21,7 +21,10 @@ class TextExtractor:
     PORTFOLIO_URL_PATTERNS = [r'/portfolio', r'/our-work', r'/work/', r'/projects/', r'/showcase']
     TESTIMONIAL_URL_PATTERNS = [r'/testimonial', r'/reviews?/', r'/client-feedback', r'/what-clients-say']
     CUSTOMER_STORY_URL_PATTERNS = [r'/customer-stor', r'/clients?/', r'/who-we-help']
-    CLIENT_PROFILE_URL_PATTERNS = [r'/client-profile', r'/featured-client', r'/spotlight']
+    CLIENT_PROFILE_URL_PATTERNS = [
+        r'/client-profile', r'/featured-client', r'/spotlight',
+        r'/p/[a-z0-9_\-]+', r'/profile/[a-z0-9_\-]+', r'/person/[a-z0-9_\-]+', r'/people/[a-z0-9_\-]+'
+    ]
 
     SERVICE_URL_PATTERNS = [
         r'/services?', r'/what-we-do', r'/solutions?', r'/offerings?', r'/packages?',

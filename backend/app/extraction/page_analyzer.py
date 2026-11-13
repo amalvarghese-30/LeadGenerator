@@ -12,6 +12,7 @@ Never invents facts. Only extracts what appears verbatim in the text.
 import re
 import logging
 from typing import Dict, List, Optional, Tuple, Any
+from urllib.parse import urlparse
 
 from app.extraction.name_validator import NameValidator
 
@@ -71,7 +72,7 @@ REVERSE_ROLE_PATTERN = re.compile(
 
 # Company-only portfolio card pattern: "Client: Acme Corp" / "Project: Acme Corp" / "Our work for Acme Corp"
 COMPANY_PORTFOLIO_PATTERN = re.compile(
-    r'(?:Client|Project|Case Study|Customer|Our work for)\s*[:–\-\s]\s*'
+    r'(?:(?:Client|Project|Case Study|Customer)\s*[:–\-]\s*|Our work for\s+)'
     r'([A-Z][a-zA-Z0-9&\.\-\']+(?:\s+[A-Z][a-zA-Z0-9&\.\-\']+){0,3})'
     r'(?:\s+(?:was|is|has|in|delivered|scaled|featured)|[\.,\n;:]|$)',
     re.IGNORECASE,
@@ -284,6 +285,43 @@ class PageAnalyzer:
                 "source_url": url,
             })
 
+        # -------------------------------------------------------------
+        # Pattern 5: Published Client Profile Page Subject
+        # -------------------------------------------------------------
+        parsed_path = urlparse(url).path.strip('/')
+        if (parsed_path.startswith("p/") or parsed_path.startswith("profile/") or parsed_path.startswith("client-profile/")) and parsed_path not in ("p/welcome", "profile"):
+            slug = parsed_path.split("/")[-1]
+            tokens = [t.capitalize() for t in slug.split("-") if t.lower() not in ("adv", "dr", "mr", "ms", "mrs", "prof")]
+            name_from_slug = " ".join(tokens)
+
+            # Extract company from page title
+            comp_from_title = None
+            if title and "|" in title:
+                parts = [pt.strip() for pt in title.split("|") if pt.strip()]
+                if len(parts) > 1:
+                    comp_from_title = parts[-1]
+
+            is_valid_name, _ = self.name_validator.validate_person_name(name_from_slug)
+            if is_valid_name:
+                cleaned_name = self.name_validator.clean_name(name_from_slug)
+                key = cleaned_name.lower()
+                if key not in seen_keys:
+                    seen_keys.add(key)
+                    first_sentence = (text or "").strip().split("\n")[0]
+                    if len(first_sentence) < 30:
+                        first_sentence = (text or "").strip()[:250]
+                    evidence = f"Published client profile for {cleaned_name}: {first_sentence}"[:450]
+                    candidates.append({
+                        "person_name": cleaned_name,
+                        "designation": None,
+                        "company_name": self._clean_company(comp_from_title),
+                        "relationship_type": "published_customer_profile",
+                        "evidence_quote": evidence,
+                        "confidence": 0.95,
+                        "extraction_method": "deterministic_published_profile",
+                        "source_url": url,
+                    })
+
         return candidates
 
     def _classify_candidate_relationship(
@@ -342,7 +380,15 @@ class PageAnalyzer:
             return None
         # Reject generic navigation or stopwords as company names
         lower = company.lower()
-        if lower in {"home", "about", "contact", "services", "team", "privacy policy", "terms of service"}:
+        generic_stops = {
+            "home", "about", "contact", "services", "team", "privacy policy", "terms of service",
+            "management", "engagement", "satisfaction", "needs", "execution", "focused services",
+            "execution and client satisfaction", "strategy", "support", "solutions", "project"
+        }
+        if lower in generic_stops:
+            return None
+        # Must contain at least one capital letter
+        if not any(c.isupper() for c in company):
             return None
         return company
 
