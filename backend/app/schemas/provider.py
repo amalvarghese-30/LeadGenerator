@@ -51,19 +51,20 @@ class ProviderResponse(BaseModel):
     location: Optional[str] = None
     country: Optional[str] = None
     social_profiles: Dict[str, str] = {}
-    category: str
-    similarity_score: float
+    category: str = "pending_review"
+    similarity_score: float = 0.0
     similarity_reasons: List[str] = []
-    discovery_status: str
-    verification_status: str
+    discovery_status: str = "discovered"
+    verification_status: str = "unverified"
     last_crawled_at: Optional[str] = None
-    source: str
+    source: str = "manual"
     employee_count: Optional[str] = None
     technologies: List[str] = []
     notable_clients: List[str] = []
     tags: List[str] = []
     notes: Optional[str] = None
-    created_at: str
-    updated_at: str
+    crawl_job_id: Optional[str] = None
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
 
-    model_config = {"from_attributes": True}
+    model_config = {"from_attributes": True, "extra": "ignore"}

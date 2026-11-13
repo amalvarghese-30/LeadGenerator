@@ -10,6 +10,13 @@ router = APIRouter(prefix="/providers", tags=["Providers"])
 
 
 def _fmt(doc: dict) -> dict:
+    if not doc:
+        return doc
+    doc.setdefault("similarity_score", 0.0)
+    doc.setdefault("source", "manual")
+    doc.setdefault("category", "pending_review")
+    doc.setdefault("discovery_status", "discovered")
+    doc.setdefault("verification_status", "unverified")
     for f in ("created_at", "updated_at", "last_crawled_at"):
         if doc.get(f) and hasattr(doc[f], "isoformat"):
             doc[f] = doc[f].isoformat()
