@@ -28,7 +28,7 @@ class Settings(BaseSettings):
     # NVIDIA / NIM
     NVIDIA_API_KEY: Optional[str] = None
     NVIDIA_BASE_URL: str = "https://integrate.api.nvidia.com/v1"
-    NVIDIA_MODEL: str = "meta/llama-3.1-70b-instruct"
+    NVIDIA_MODEL: str = "nvidia/nemotron-3.5-bolt-e4b"
     NVIDIA_ENABLED: bool = False
 
     # SearXNG

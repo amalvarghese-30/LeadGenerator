@@ -349,7 +349,7 @@ class JobProcessor:
         )
         logger.info(
             "[JOB] %s done. refs=%d contacts=%d companies=%d leads=%d",
-            job_id, references_found, contacts_created, companies_created, leads_created,
+            job_id, valid_client_references, contacts_created, companies_created, leads_created,
         )
 
     # ------------------------------------------------------------------
