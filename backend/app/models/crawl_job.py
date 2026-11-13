@@ -9,7 +9,7 @@ CRAWL_STATUSES = [
 
 CURRENT_STAGES = [
     "queued", "discovering", "crawling", "extracting",
-    "verifying", "creating_crm_records", "generating_report", "completed",
+    "verifying", "creating_crm_records", "enriching_contacts", "generating_report", "completed",
 ]
 
 

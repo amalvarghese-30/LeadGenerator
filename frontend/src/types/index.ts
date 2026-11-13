@@ -49,9 +49,38 @@ export interface Company {
   updated_at?: string;
 }
 
+export interface ContactChannel {
+  type: 'email' | 'phone' | 'contact_form' | 'social' | 'website';
+  scope: 'person_direct_work' | 'company_generic' | 'company_switchboard' | 'department' | 'media_enquiry' | 'sales_enquiry' | 'unclassified';
+  value: string;
+  source_url?: string;
+  source_type?: string;
+  evidence_quote?: string;
+  collected_at?: string;
+  last_checked_at?: string;
+  syntax_valid?: boolean;
+  mx_record_found?: boolean;
+  domain_valid?: boolean;
+  source_verified?: boolean;
+  human_reviewed?: boolean;
+  confidence?: number;
+  verification_status: 'not_found' | 'discovered' | 'published' | 'format_checked' | 'source_verified' | 'human_reviewed' | 'rejected';
+  notes?: string;
+}
+
+export type EnrichmentStatus =
+  | 'not_started'
+  | 'in_progress'
+  | 'enriched'
+  | 'partially_enriched'
+  | 'no_public_contacts_found'
+  | 'failed';
+
 export interface Contact {
   id: string;
   full_name: string;
+  first_name?: string;
+  last_name?: string;
   designation?: string;
   company_id?: string;
   company_name?: string;
@@ -60,7 +89,12 @@ export interface Contact {
   phone?: string;
   professional_urls: Record<string, string>;
   business_contacts: Record<string, string>;
-  contact_verification_status: 'discovered' | 'unverified' | 'verified' | 'human_approved' | 'rejected';
+  contact_channels?: ContactChannel[];
+  contact_verification_status: 'discovered' | 'unverified' | 'source_reviewed' | 'company_verified' | 'contact_source_verified' | 'verified' | 'human_approved' | 'rejected';
+  enrichment_status?: EnrichmentStatus;
+  last_enriched_at?: string;
+  enrichment_attempts?: number;
+  enrichment_errors?: string[];
   is_suppressed: boolean;
   do_not_contact: boolean;
   source_references?: string[];
@@ -163,6 +197,7 @@ export interface CrawlJob {
   | 'extracting'
   | 'verifying'
   | 'creating_crm_records'
+  | 'enriching_contacts'
   | 'generating_report'
   | 'completed'
   | 'failed';

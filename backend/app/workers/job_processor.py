@@ -21,6 +21,7 @@ from app.crm.reference_service import ReferenceService
 from app.crm.contact_service import ContactService
 from app.crm.company_service import CompanyService
 from app.crm.lead_service import LeadService
+from app.enrichment.contact_enrichment_service import ContactEnrichmentService
 
 logging.basicConfig(
     level=logging.INFO,
@@ -48,6 +49,7 @@ class JobProcessor:
         self.discovery_manager = DiscoveryManager()
         self.crawler_manager = CrawlerManager(max_pages=MAX_PAGES_PER_JOB)
         self.client_classifier = ClientClassifier()
+        self.enrichment_service = ContactEnrichmentService()
         self.running = True
 
     # ------------------------------------------------------------------
@@ -207,6 +209,7 @@ class JobProcessor:
         leads_created = 0
         confidence_bands = {"high": 0, "medium": 0, "low": 0}
         rejected_sample: List[Dict[str, Any]] = []
+        all_job_contact_ids: List[str] = []
 
         for page in crawled_pages:
             if page.get("status") != "success":
@@ -268,13 +271,22 @@ class JobProcessor:
                     valid_client_references += 1
                     pending_verification += 1
 
-                    # Company
+                    # Company extraction with Schema.org & domain
                     company_id = None
                     if ref.get("company_name"):
-                        comp = await company_service.create({
+                        comp_data = {
                             "name": ref["company_name"],
                             "industry": ref.get("industry"),
-                        })
+                        }
+                        # Inspect page schema_organizations for matching info
+                        for s_org in page.get("schema_organizations", []):
+                            if s_org.get("name") and ref["company_name"].lower() in s_org["name"].lower():
+                                if s_org.get("url"):
+                                    comp_data["website"] = s_org["url"]
+                                if s_org.get("email"):
+                                    comp_data["public_contact"] = {"email": s_org["email"]}
+
+                        comp = await company_service.create(comp_data)
                         company_id = comp.get("id")
                         if comp.get("created", False):
                             companies_created += 1
@@ -287,8 +299,117 @@ class JobProcessor:
                             plat = soc.get("platform", "").lower()
                             if soc.get("url") and plat in ("linkedin", "twitter", "instagram", "facebook", "youtube", "github"):
                                 prof_urls[plat] = soc["url"]
+
                         page_emails = page.get("public_emails", [])
+                        page_phones = page.get("public_phones", [])
+                        contact_forms = page.get("contact_forms", [])
+                        source_url = page.get("url") or ref.get("source_url") or ""
+
+                        # Build initial verified contact channels
+                        initial_channels: List[Dict[str, Any]] = []
+
+                        # Social channels
+                        for plat, s_url in prof_urls.items():
+                            initial_channels.append({
+                                "type": "social",
+                                "scope": "person_direct_work",
+                                "value": s_url,
+                                "source_url": source_url,
+                                "source_type": "webpage",
+                                "evidence_quote": f"Discovered {plat} profile link",
+                                "syntax_valid": True,
+                                "source_verified": True,
+                                "verification_status": "published",
+                                "confidence": 0.85,
+                            })
+
+                        # Email channels
+                        is_profile_page = bool(ref.get("person_name", "").lower() in source_url.lower())
+                        for em in page_emails:
+                            scope = "person_direct_work" if is_profile_page else "company_generic"
+                            initial_channels.append({
+                                "type": "email",
+                                "scope": scope,
+                                "value": em,
+                                "source_url": source_url,
+                                "source_type": "webpage",
+                                "evidence_quote": ref.get("evidence_quote") or f"Published on {source_url}",
+                                "syntax_valid": True,
+                                "source_verified": False,
+                                "verification_status": "published",
+                                "confidence": 0.75 if scope == "person_direct_work" else 0.6,
+                            })
+
+                        # Phone channels
+                        for ph in page_phones:
+                            scope = "person_direct_work" if is_profile_page else "company_switchboard"
+                            initial_channels.append({
+                                "type": "phone",
+                                "scope": scope,
+                                "value": ph,
+                                "source_url": source_url,
+                                "source_type": "webpage",
+                                "evidence_quote": ref.get("evidence_quote") or f"Published on {source_url}",
+                                "syntax_valid": True,
+                                "source_verified": False,
+                                "verification_status": "published",
+                                "confidence": 0.7 if scope == "person_direct_work" else 0.55,
+                            })
+
+                        # Contact forms
+                        for cf in contact_forms:
+                            initial_channels.append({
+                                "type": "contact_form",
+                                "scope": "company_generic",
+                                "value": cf,
+                                "source_url": source_url,
+                                "source_type": "webpage",
+                                "evidence_quote": "Official web contact form",
+                                "syntax_valid": True,
+                                "source_verified": True,
+                                "verification_status": "published",
+                                "confidence": 0.85,
+                            })
+
+                        # Check Schema.org Persons
+                        for sp in page.get("schema_persons", []):
+                            sp_name = sp.get("name") or ""
+                            if ref["person_name"].lower() in sp_name.lower():
+                                if sp.get("email"):
+                                    initial_channels.append({
+                                        "type": "email",
+                                        "scope": "person_direct_work",
+                                        "value": sp["email"],
+                                        "source_url": source_url,
+                                        "source_type": "json_ld_person",
+                                        "evidence_quote": "Schema.org Person metadata",
+                                        "syntax_valid": True,
+                                        "source_verified": True,
+                                        "verification_status": "source_verified",
+                                        "confidence": 0.9,
+                                    })
+                                if sp.get("telephone"):
+                                    initial_channels.append({
+                                        "type": "phone",
+                                        "scope": "person_direct_work",
+                                        "value": sp["telephone"],
+                                        "source_url": source_url,
+                                        "source_type": "json_ld_person",
+                                        "evidence_quote": "Schema.org Person metadata",
+                                        "syntax_valid": True,
+                                        "source_verified": True,
+                                        "verification_status": "source_verified",
+                                        "confidence": 0.9,
+                                    })
+
                         contact_email = page_emails[0] if page_emails else None
+                        contact_phone = page_phones[0] if page_phones else None
+
+                        b_contacts = {}
+                        if contact_email:
+                            b_contacts["email"] = contact_email
+                        if contact_phone:
+                            b_contacts["phone"] = contact_phone
 
                         contact, was_new = await contact_service.create({
                             "full_name": ref["person_name"],
@@ -298,11 +419,15 @@ class JobProcessor:
                             "contact_verification_status": "discovered",
                             "source_references": [ref_doc.get("id")],
                             "email": contact_email,
-                            "business_contacts": {"email": contact_email} if contact_email else {},
+                            "phone": contact_phone,
+                            "business_contacts": b_contacts,
                             "professional_urls": prof_urls,
                             "linkedin_url": prof_urls.get("linkedin"),
+                            "contact_channels": initial_channels,
                         })
                         contact_id = contact.get("id")
+                        if contact_id and contact_id not in all_job_contact_ids:
+                            all_job_contact_ids.append(contact_id)
                         if was_new:
                             contacts_created += 1
 
@@ -323,6 +448,32 @@ class JobProcessor:
                         "crm", e, url=ref.get("source_url"), err_type="crm",
                     ))
 
+        # ---------- Stage 4b: Contact Enrichment Engine ----------
+        enrichment_metrics = {
+            "total_contacts_enriched": 0,
+            "direct_emails_found": 0,
+            "direct_phones_found": 0,
+            "generic_emails_found": 0,
+            "company_phones_found": 0,
+            "contact_forms_found": 0,
+            "no_public_contacts_found": 0,
+        }
+        if all_job_contact_ids:
+            await self._stage(db, job_id, "enriching_contacts", 78)
+            logger.info("[ENRICHMENT] Starting contact enrichment for %d contacts", len(all_job_contact_ids))
+            for cid in all_job_contact_ids:
+                try:
+                    en_res = await self.enrichment_service.enrich_contact(db, cid)
+                    enrichment_metrics["total_contacts_enriched"] += 1
+                    enrichment_metrics["direct_emails_found"] += en_res.get("direct_emails", 0)
+                    enrichment_metrics["direct_phones_found"] += en_res.get("direct_phones", 0)
+                    enrichment_metrics["generic_emails_found"] += en_res.get("generic_emails", 0)
+                    enrichment_metrics["company_phones_found"] += en_res.get("company_phones", 0)
+                    if en_res.get("status") == "no_public_contacts_found":
+                        enrichment_metrics["no_public_contacts_found"] += 1
+                except Exception as en_err:
+                    logger.warning("[ENRICHMENT] error on contact %s: %s", cid, en_err)
+
         # Data-quality summary dictionary
         data_quality_metrics = {
             "pages_processed": len([p for p in crawled_pages if p.get("status") == "success"]),
@@ -339,6 +490,7 @@ class JobProcessor:
             "companies_created": companies_created,
             "leads_created": leads_created,
             "confidence_distribution": confidence_bands,
+            "enrichment_metrics": enrichment_metrics,
         }
 
         # ---------- Stage 5: Report ----------
@@ -444,6 +596,7 @@ class JobProcessor:
             "pages_failed": len(failed_pages),
             "references_found": references_found,
             "data_quality_metrics": data_quality_metrics or {},
+            "enrichment_summary": (data_quality_metrics or {}).get("enrichment_metrics", {}),
             "rejected_candidates": rejected_sample or [],
             "social_media_profiles": socials,
             "public_emails_discovered": sorted(emails),

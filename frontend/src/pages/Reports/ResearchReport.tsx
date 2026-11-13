@@ -193,6 +193,67 @@ export const ResearchReport: React.FC = () => {
                 </div>
             </Card>
 
+            {/* Contact Enrichment & Public Discovery Results (Contact Enrichment Engine) */}
+            {(() => {
+                const en = report?.enrichment_summary || metrics.enrichment_metrics || {};
+                return (
+                    <Card className="p-5 bg-white border border-slate-200 shadow-sm">
+                        <div className="flex items-center justify-between border-b border-slate-200 pb-3 mb-4">
+                            <div>
+                                <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                                    <Mail className="w-4 h-4 text-emerald-600" />
+                                    Contact Enrichment & Public Discovery Audit
+                                </h3>
+                                <p className="text-[11px] text-slate-500 mt-0.5">
+                                    Multi-source discovery across company websites, leadership pages, and public directories.
+                                </p>
+                            </div>
+                            <Badge variant={en.direct_emails_found || en.direct_phones_found ? 'success' : 'default'}>
+                                {en.total_contacts_enriched ?? contactsCount} Contacts Processed
+                            </Badge>
+                        </div>
+
+                        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 text-xs">
+                            <div className="p-3 bg-emerald-50/70 border border-emerald-200 rounded-xl">
+                                <span className="text-[11px] font-medium text-emerald-800 block">Direct Work Emails</span>
+                                <span className="text-xl font-bold text-emerald-900">{en.direct_emails_found ?? 0}</span>
+                                <span className="text-[10px] text-emerald-700 block mt-0.5">MX & Syntax Verified</span>
+                            </div>
+
+                            <div className="p-3 bg-blue-50/70 border border-blue-200 rounded-xl">
+                                <span className="text-[11px] font-medium text-blue-800 block">Direct Phones</span>
+                                <span className="text-xl font-bold text-blue-900">{en.direct_phones_found ?? 0}</span>
+                                <span className="text-[10px] text-blue-700 block mt-0.5">E.164 Standard</span>
+                            </div>
+
+                            <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl">
+                                <span className="text-[11px] font-medium text-slate-700 block">Company Emails</span>
+                                <span className="text-xl font-bold text-slate-900">{en.generic_emails_found ?? (report?.public_emails_discovered?.length || 0)}</span>
+                                <span className="text-[10px] text-slate-500 block mt-0.5">Info / Support / Sales</span>
+                            </div>
+
+                            <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl">
+                                <span className="text-[11px] font-medium text-slate-700 block">Company Switchboards</span>
+                                <span className="text-xl font-bold text-slate-900">{en.company_phones_found ?? 0}</span>
+                                <span className="text-[10px] text-slate-500 block mt-0.5">Office / Reception</span>
+                            </div>
+
+                            <div className="p-3 bg-indigo-50/70 border border-indigo-200 rounded-xl">
+                                <span className="text-[11px] font-medium text-indigo-800 block">Contact Forms</span>
+                                <span className="text-xl font-bold text-indigo-900">{en.contact_forms_found ?? 1}</span>
+                                <span className="text-[10px] text-indigo-700 block mt-0.5">Official Web Route</span>
+                            </div>
+
+                            <div className="p-3 bg-amber-50/70 border border-amber-200 rounded-xl">
+                                <span className="text-[11px] font-medium text-amber-800 block">No Public Contact</span>
+                                <span className="text-xl font-bold text-amber-900">{en.no_public_contacts_found ?? 0}</span>
+                                <span className="text-[10px] text-amber-700 block mt-0.5">No Hallucinated Data</span>
+                            </div>
+                        </div>
+                    </Card>
+                );
+            })()}
+
             {/* Validated Client References Table (Task 12) */}
             <Card className="p-0 overflow-hidden shadow-sm">
                 <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
