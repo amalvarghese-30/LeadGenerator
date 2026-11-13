@@ -17,7 +17,10 @@ SOCIAL_AND_DIRECTORY_DOMAINS = {
     "youtube.com", "wikipedia.org", "crunchbase.com", "bloomberg.com",
     "dnb.com", "zoominfo.com", "pitchbook.com", "glassdoor.com",
     "indeed.com", "yellowpages.com", "justdial.com", "indiamart.com",
-    "zaubacorp.com", "tofler.in", "instafinancials.com"
+    "zaubacorp.com", "tofler.in", "instafinancials.com", "tracxn.com",
+    "craft.co", "apollo.io", "lusha.com", "rocketreach.co", "growjo.com",
+    "cbinsights.com", "owler.com", "ambitionbox.com", "clutch.co",
+    "goodfirms.co", "themanifest.com", "g2.com", "capterra.com", "trustpilot.com"
 }
 
 
@@ -43,12 +46,14 @@ class WebsiteDiscovery:
                 if any(ignored in domain for ignored in SOCIAL_AND_DIRECTORY_DOMAINS):
                     continue
 
-                # Verification: snippet or title should contain words from company name
+                # Verification: domain or title should strongly match company name
                 name_tokens = [t for t in normalize_string(clean_name).split() if len(t) > 2]
-                text_to_check = f"{res.get('title', '')} {res.get('snippet', '')} {domain}".lower()
-                matches = sum(1 for tok in name_tokens if tok in text_to_check)
-                if matches >= min(2, len(name_tokens)):
-                    # Root or normalized URL
+                domain_clean = domain.replace("-", "").replace(".", "")
+                domain_matches = any(tok in domain_clean for tok in name_tokens)
+                title_matches = any(tok in res.get("title", "").lower() for tok in name_tokens)
+
+                # Prioritize official domains where the company name appears in the domain itself
+                if domain_matches or (title_matches and not any(ind in domain for ind in ["directory", "wiki", "portal", "profile", "listing", "review", "database", "analytics"])):
                     parsed = urlparse(url)
                     root_url = f"{parsed.scheme}://{parsed.netloc}"
                     return root_url
