@@ -8,6 +8,7 @@ import {
   Download,
   Trash2,
 } from 'lucide-react';
+import { LinkedinIcon, TwitterIcon, InstagramIcon } from '../../components/ui/SocialIcons';
 import { getContacts, suppressContact, deleteContact } from '../../services/contacts';
 import { exportContacts } from '../../services/reports';
 import { Contact } from '../../types';
@@ -176,11 +177,47 @@ export const Contacts: React.FC = () => {
                       <div className="text-[11px] text-slate-500">{c.company_name || 'Independent'}</div>
                     </td>
                     <td className="py-3.5 px-4 font-mono text-[11px]">
-                      {c.business_contacts?.email ? (
-                        <span className="flex items-center gap-1 text-emerald-700">
+                      {c.business_contacts?.email && (
+                        <div className="flex items-center gap-1 text-emerald-700 font-sans mb-1">
                           <Mail className="w-3 h-3 text-emerald-600" /> {c.business_contacts.email}
-                        </span>
-                      ) : (
+                        </div>
+                      )}
+                      <div className="flex items-center gap-2 mt-0.5">
+                        {(c.professional_urls?.linkedin || c.linkedin_url) && (
+                          <a
+                            href={c.professional_urls?.linkedin || c.linkedin_url}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="inline-flex items-center gap-1 text-blue-600 hover:text-blue-800 hover:underline font-sans text-[11px] font-medium"
+                            title="LinkedIn Profile"
+                          >
+                            <LinkedinIcon className="w-3 h-3" /> LinkedIn
+                          </a>
+                        )}
+                        {c.professional_urls?.twitter && (
+                          <a
+                            href={c.professional_urls.twitter}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="inline-flex items-center gap-1 text-sky-500 hover:text-sky-700 font-sans text-[11px]"
+                            title="Twitter / X"
+                          >
+                            <TwitterIcon className="w-3 h-3" />
+                          </a>
+                        )}
+                        {c.professional_urls?.instagram && (
+                          <a
+                            href={c.professional_urls.instagram}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="inline-flex items-center gap-1 text-pink-600 hover:text-pink-800 font-sans text-[11px]"
+                            title="Instagram"
+                          >
+                            <InstagramIcon className="w-3 h-3" />
+                          </a>
+                        )}
+                      </div>
+                      {!c.business_contacts?.email && !c.professional_urls?.linkedin && !c.linkedin_url && (
                         <span className="text-slate-400 font-sans">Public enquiry route</span>
                       )}
                     </td>

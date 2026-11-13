@@ -15,6 +15,7 @@ import {
   ChevronRight,
   ShieldAlert,
 } from 'lucide-react';
+import { LinkedinIcon, TwitterIcon, InstagramIcon } from '../../components/ui/SocialIcons';
 import { getLeads, updateLeadStage } from '../../services/leads';
 import { exportLeads } from '../../services/reports';
 import { Lead, CRMStage } from '../../types';
@@ -326,11 +327,47 @@ export const Leads: React.FC = () => {
                         <StatusBadge stage={l.crm_stage} />
                       </td>
                       <td className="py-3.5 px-4 text-slate-500">
-                        {contact?.business_contacts?.email ? (
-                          <span className="flex items-center gap-1 text-slate-700 font-mono text-[11px]">
+                        {contact?.business_contacts?.email && (
+                          <div className="flex items-center gap-1 text-emerald-700 font-mono text-[11px] mb-1">
                             <Mail className="w-3 h-3 text-emerald-600" /> {contact.business_contacts.email}
-                          </span>
-                        ) : (
+                          </div>
+                        )}
+                        <div className="flex items-center gap-2">
+                          {(contact?.professional_urls?.linkedin || contact?.linkedin_url) && (
+                            <a
+                              href={contact.professional_urls?.linkedin || contact.linkedin_url}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="inline-flex items-center gap-1 text-blue-600 hover:text-blue-800 hover:underline font-sans text-[11px] font-medium"
+                              title="LinkedIn Profile"
+                            >
+                              <LinkedinIcon className="w-3 h-3" /> LinkedIn
+                            </a>
+                          )}
+                          {contact?.professional_urls?.twitter && (
+                            <a
+                              href={contact.professional_urls.twitter}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="inline-flex items-center gap-1 text-sky-500 hover:text-sky-700"
+                              title="Twitter / X"
+                            >
+                              <TwitterIcon className="w-3 h-3" />
+                            </a>
+                          )}
+                          {contact?.professional_urls?.instagram && (
+                            <a
+                              href={contact.professional_urls.instagram}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="inline-flex items-center gap-1 text-pink-600 hover:text-pink-800"
+                              title="Instagram"
+                            >
+                              <InstagramIcon className="w-3 h-3" />
+                            </a>
+                          )}
+                        </div>
+                        {!contact?.business_contacts?.email && !contact?.professional_urls?.linkedin && !contact?.linkedin_url && (
                           <span className="text-slate-400">Website enquiry only</span>
                         )}
                       </td>

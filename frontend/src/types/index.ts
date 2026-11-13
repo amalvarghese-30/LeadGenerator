@@ -55,6 +55,9 @@ export interface Contact {
   designation?: string;
   company_id?: string;
   company_name?: string;
+  linkedin_url?: string;
+  email?: string;
+  phone?: string;
   professional_urls: Record<string, string>;
   business_contacts: Record<string, string>;
   contact_verification_status: 'discovered' | 'unverified' | 'verified' | 'human_approved' | 'rejected';

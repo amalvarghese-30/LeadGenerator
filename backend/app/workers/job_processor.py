@@ -282,6 +282,14 @@ class JobProcessor:
                     # Contact (only created if a valid person name was extracted!)
                     contact_id = None
                     if ref.get("person_name"):
+                        prof_urls = {}
+                        for soc in page.get("social_profiles", []):
+                            plat = soc.get("platform", "").lower()
+                            if soc.get("url") and plat in ("linkedin", "twitter", "instagram", "facebook", "youtube", "github"):
+                                prof_urls[plat] = soc["url"]
+                        page_emails = page.get("public_emails", [])
+                        contact_email = page_emails[0] if page_emails else None
+
                         contact, was_new = await contact_service.create({
                             "full_name": ref["person_name"],
                             "designation": ref.get("designation"),
@@ -289,6 +297,10 @@ class JobProcessor:
                             "company_name": ref.get("company_name"),
                             "contact_verification_status": "discovered",
                             "source_references": [ref_doc.get("id")],
+                            "email": contact_email,
+                            "business_contacts": {"email": contact_email} if contact_email else {},
+                            "professional_urls": prof_urls,
+                            "linkedin_url": prof_urls.get("linkedin"),
                         })
                         contact_id = contact.get("id")
                         if was_new:

@@ -17,7 +17,7 @@ import {
   Award,
   Plus,
 } from 'lucide-react';
-import { LinkedinIcon } from '../../components/ui/SocialIcons';
+import { LinkedinIcon, TwitterIcon, InstagramIcon } from '../../components/ui/SocialIcons';
 import { getLead, updateLeadStage, qualifyLead } from '../../services/leads';
 import { getActivities, createActivity } from '../../services/activities';
 import { Lead, Activity, CRMStage } from '../../types';
@@ -207,16 +207,36 @@ export const LeadDetail: React.FC = () => {
               </div>
             </div>
 
-            {contact?.professional_urls && Object.keys(contact.professional_urls).length > 0 && (
-              <div className="pt-2 border-t border-slate-100 flex items-center gap-3">
-                {contact.professional_urls.linkedin && (
+            {((contact?.professional_urls && Object.keys(contact.professional_urls).length > 0) || contact?.linkedin_url || company?.website) && (
+              <div className="pt-2 border-t border-slate-100 flex flex-wrap items-center gap-3">
+                {(contact?.professional_urls?.linkedin || contact?.linkedin_url) && (
                   <a
-                    href={contact.professional_urls.linkedin}
+                    href={contact?.professional_urls?.linkedin || contact?.linkedin_url}
                     target="_blank"
                     rel="noreferrer"
                     className="flex items-center gap-1.5 text-xs text-blue-600 hover:underline"
                   >
                     <LinkedinIcon className="w-3.5 h-3.5" /> LinkedIn Profile <ExternalLink className="w-2.5 h-2.5" />
+                  </a>
+                )}
+                {contact?.professional_urls?.twitter && (
+                  <a
+                    href={contact.professional_urls.twitter}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="flex items-center gap-1.5 text-xs text-sky-500 hover:underline"
+                  >
+                    <TwitterIcon className="w-3.5 h-3.5" /> Twitter / X <ExternalLink className="w-2.5 h-2.5" />
+                  </a>
+                )}
+                {contact?.professional_urls?.instagram && (
+                  <a
+                    href={contact.professional_urls.instagram}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="flex items-center gap-1.5 text-xs text-pink-600 hover:underline"
+                  >
+                    <InstagramIcon className="w-3.5 h-3.5" /> Instagram <ExternalLink className="w-2.5 h-2.5" />
                   </a>
                 )}
                 {company?.website && (
