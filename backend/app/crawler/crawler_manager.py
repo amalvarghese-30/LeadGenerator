@@ -155,6 +155,8 @@ class CrawlerManager:
         result.update({
             "url": final_url,
             "page_title": content.get("title", ""),
+            "h1": content.get("h1", ""),
+            "h2s": content.get("h2s", []),
             "main_text": content.get("main_text", ""),
             "word_count": word_count,
             "public_emails": content.get("public_emails", []),

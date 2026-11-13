@@ -1,19 +1,25 @@
 """
-Client identification pipeline.
+Client identification and classification pipeline.
 
 Order of operations per page:
-  1. Rule-based page classification (TextExtractor)
-  2. Deterministic rich extraction via PageAnalyzer (always runs)
-  3. Optional NVIDIA augmentation (merges with deterministic results)
+  1. Multi-signal page classification (TextExtractor)
+  2. Multi-signal deterministic extraction via PageAnalyzer (each candidate classified independently)
+  3. Optional NVIDIA augmentation (merges with deterministic results without overwriting evidence)
+  4. Strict validation (EvidenceValidator + NameValidator)
+  5. Distinction between:
+     - Confirmed client references (case studies, testimonials, portfolio, client profiles)
+     - Company-only references
+     - Non-client mentions (featured personalities, collaborators, ordinary mentions)
+     - Rejected false positives with explicit rejection reasons
 
-Every returned record has verification_status = "pending". AI cannot self-verify.
+Every persisted record has verification_status = "pending". AI cannot self-verify.
 """
 import logging
 from datetime import datetime
-from typing import Dict, List
+from typing import Dict, List, Any, Tuple
 
 from app.ai.nvidia_client import NvidiaClient
-from app.extraction.evidence_validator import EvidenceValidator
+from app.extraction.evidence_validator import EvidenceValidator, CLIENT_CUSTOMER_RELATIONSHIPS
 from app.extraction.page_analyzer import PageAnalyzer
 from app.extraction.text_extraction import TextExtractor
 
@@ -27,89 +33,137 @@ class ClientClassifier:
         self.evidence_validator = EvidenceValidator()
         self.nvidia_client = NvidiaClient()
 
-    async def process_page(self, page_data: Dict, provider_id: str) -> List[Dict]:
+    async def process_page(self, page_data: Dict[str, Any], provider_id: str) -> List[Dict[str, Any]]:
+        """
+        Backwards-compatible interface: returns list of validated client references.
+        Metadata and rejected items are stored on the classifier instance for job processor retrieval.
+        """
+        results, _, _ = await self.process_page_detailed(page_data, provider_id)
+        return results
+
+    async def process_page_detailed(
+        self, page_data: Dict[str, Any], provider_id: str
+    ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], Dict[str, Any]]:
+        """
+        Process a page and return:
+        (valid_references, rejected_candidates, page_metadata)
+        """
         url = page_data.get("url", "")
-        title = page_data.get("title", "")
+        title = page_data.get("page_title") or page_data.get("title", "")
         text = page_data.get("main_text", "")
+        h1 = page_data.get("h1", "")
+        h2s = page_data.get("h2s", [])
 
-        if not text or len(text) < 100:
+        if not text or len(text.strip()) < 80:
             logger.debug("Skipping page with insufficient text: %s", url)
-            return []
+            return [], [], {"skipped": True, "reason": "Insufficient content (< 80 chars)"}
 
-        page_meta = self.text_extractor.classify_page_relevance(url, title, text)
+        # 1. Multi-signal page classification
+        page_meta = self.text_extractor.classify_page_relevance(
+            url=url,
+            title=title,
+            text=text,
+            h1=h1,
+            h2s=h2s,
+        )
+
         if not page_meta["is_client_reference_page"]:
             logger.debug(
-                "Page not a client reference page (score=%d): %s",
+                "Page not a client reference page (category=%s, score=%d): %s",
+                page_meta.get("page_category"),
                 page_meta.get("relevance_score", 0),
                 url,
             )
-            return []
+            return [], [], page_meta
 
-        # Deterministic extraction — always runs
+        # 2. Deterministic rich extraction (with individual candidate relationship classification)
         deterministic = self.page_analyzer.analyze(text, url, title)
 
-        # NVIDIA augmentation if available
-        ai_results: List[Dict] = []
-        ai_used = False
+        # 3. NVIDIA augmentation if available
+        ai_results: List[Dict[str, Any]] = []
         if await self.nvidia_client.is_available():
-            raw = await self.nvidia_client.extract_entities(text, url, title)
-            if raw:
-                ai_results = raw
-                ai_used = True
+            try:
+                raw = await self.nvidia_client.extract_entities(text, url, title)
+                if raw:
+                    ai_results = raw
+            except Exception as e:
+                logger.warning("NVIDIA entity extraction error: %s", e)
 
-        merged = self._merge(deterministic, ai_results, url, page_meta)
+        # 4. Merge results without overwriting deterministic high-precision evidence
+        merged = self._merge(deterministic, ai_results, url)
 
-        # Final validation & filter
-        final: List[Dict] = []
+        # 5. Strict multi-stage validation
+        valid_references: List[Dict[str, Any]] = []
+        rejected_candidates: List[Dict[str, Any]] = []
+
         for ref in merged:
             ref["provider_id"] = provider_id
             ref["page_category"] = page_meta["page_category"]
             ref["collected_at"] = datetime.utcnow().isoformat()
             ref["verification_status"] = "pending"
 
-            is_valid, issues = self.evidence_validator.validate(ref)
+            # Check evidence validity
+            is_valid, rejection_reasons = self.evidence_validator.validate(ref, source_text=text)
+
+            # Check if this relationship represents a real customer relationship
+            rel = ref.get("relationship_type", "unclear_relationship")
+            if rel not in CLIENT_CUSTOMER_RELATIONSHIPS:
+                # Collaborators, featured personalities, and ordinary mentions are classified accordingly
+                # but should not be treated as client references
+                rejection_reasons.append(f"Relationship type '{rel}' is not a client/customer relationship")
+                is_valid = False
+
             if is_valid:
-                final.append(ref)
+                valid_references.append(ref)
             else:
-                logger.debug("Reference failed validation (%s): %s",
-                             ref.get("person_name") or ref.get("company_name"), issues)
+                rejected_record = {
+                    **ref,
+                    "rejection_reasons": rejection_reasons,
+                    "rejected_at": datetime.utcnow().isoformat(),
+                }
+                rejected_candidates.append(rejected_record)
+                logger.debug(
+                    "Rejected candidate: %s | reasons: %s",
+                    ref.get("person_name") or ref.get("company_name"),
+                    rejection_reasons,
+                )
 
         logger.info(
-            "Extracted %d client references from %s (deterministic=%d, ai=%d)",
-            len(final), url, len(deterministic), len(ai_results),
+            "Extracted from %s: %d valid client references, %d rejected candidates (det=%d, ai=%d)",
+            url, len(valid_references), len(rejected_candidates), len(deterministic), len(ai_results),
         )
-        return final
+        return valid_references, rejected_candidates, page_meta
 
-    # ------------------------------------------------------------------
-    def _merge(self, det: List[Dict], ai: List[Dict], url: str, page_meta: Dict) -> List[Dict]:
-        """Merge deterministic and AI results, preferring more complete fields."""
-        by_name: Dict[str, Dict] = {}
+    def _merge(self, det: List[Dict], ai: List[Dict], url: str) -> List[Dict]:
+        """Merge deterministic and AI results, prioritizing deterministic evidence."""
+        by_key: Dict[str, Dict] = {}
 
         for ref in det:
-            key = (ref.get("person_name") or "").lower()
+            key = (ref.get("person_name") or f"comp:{ref.get('company_name')}" or "").lower()
             if not key:
                 continue
-            by_name[key] = dict(ref)
+            by_key[key] = dict(ref)
 
         for ref in ai:
-            key = (ref.get("person_name") or ref.get("company_name") or "").lower()
+            person = ref.get("person_name")
+            comp = ref.get("company_name")
+            key = (person or f"comp:{comp}" or "").lower()
             if not key:
                 continue
-            if key in by_name:
-                # Merge — AI fills in missing fields only
-                existing = by_name[key]
-                for field in ("designation", "company_name", "industry", "service_category",
-                              "relationship_type", "evidence_quote"):
+
+            if key in by_key:
+                # Fill missing fields only
+                existing = by_key[key]
+                for field in ("designation", "company_name", "industry", "service_category"):
                     if not existing.get(field) and ref.get(field):
                         existing[field] = ref[field]
-                # Promote confidence if AI agrees with deterministic finding
                 existing["confidence"] = max(
-                    float(existing.get("confidence", 0.5)),
+                    float(existing.get("confidence", 0.7)),
                     float(ref.get("confidence", 0.5)),
                 )
                 existing["extraction_method"] = "deterministic+ai"
             else:
-                by_name[key] = {
+                by_key[key] = {
                     "person_name": ref.get("person_name"),
                     "designation": ref.get("designation"),
                     "company_name": ref.get("company_name"),
@@ -117,14 +171,13 @@ class ClientClassifier:
                     "relationship_type": ref.get("relationship_type", "unclear_relationship"),
                     "service_category": ref.get("service_category"),
                     "source_url": url,
-                    "evidence_quote": ref.get("evidence_quote"),
+                    "evidence_quote": ref.get("evidence_quote") or f"Mentioned on {url}",
                     "confidence": float(ref.get("confidence", 0.5)),
                     "extraction_method": "nvidia_nemotron",
                 }
 
-        # Ensure every result has required fields
         out = []
-        for ref in by_name.values():
+        for ref in by_key.values():
             ref.setdefault("source_url", url)
             out.append(ref)
         return out

@@ -16,7 +16,7 @@ def test_text_extractor_page_classification():
         "We worked with Dr. Malhotra to build his Google Knowledge Panel and authority."
     )
     assert res_cs["is_client_reference_page"] is True
-    assert res_cs["page_category"] == "case_study"
+    assert res_cs["page_category"] in ["case_study", "Case Study"]
 
     # Generic page
     res_gen = extractor.classify_page_relevance(

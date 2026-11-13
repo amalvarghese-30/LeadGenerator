@@ -1,221 +1,321 @@
 """
-Deterministic NLP extraction that produces rich, structured client references
-WITHOUT requiring NVIDIA. Combines:
-  - Regex patterns for "Name, Role at Company"
-  - Context windows around person mentions
-  - Designation/company co-occurrence
-  - Relationship classification
-  - Evidence quotes
+Deterministic NLP extraction for client references and evidence.
+Combines:
+  - Multi-stage person name validation (NameValidator)
+  - Sentence and paragraph level semantic parsing
+  - Per-candidate individual relationship classification
+  - Company-only reference detection (without inventing fake people)
+  - Strict evidence quotation attribution
 
 Never invents facts. Only extracts what appears verbatim in the text.
 """
 import re
 import logging
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Any
+
+from app.extraction.name_validator import NameValidator
 
 logger = logging.getLogger(__name__)
 
+# Designations & Titles
 DESIGNATION_KEYWORDS = [
-    "Founder", "Co-Founder", "Co Founder", "CEO", "CTO", "CFO", "COO", "CMO", "CPO",
     "Chief Executive Officer", "Chief Technology Officer", "Chief Financial Officer",
-    "Chief Operating Officer", "Chief Marketing Officer",
-    "Managing Director", "Director", "Senior Director", "Executive Director",
+    "Chief Operating Officer", "Chief Marketing Officer", "Chief Product Officer",
+    "Chief Information Officer", "Chief Revenue Officer", "Chief Legal Officer",
+    "Founder", "Co-Founder", "Co Founder", "Founding Partner",
+    "CEO", "CTO", "CFO", "COO", "CMO", "CPO", "CIO", "CRO",
+    "Managing Director", "Executive Director", "Senior Director", "Director",
     "President", "Vice President", "VP", "Head of", "General Manager", "GM",
-    "Partner", "Senior Partner", "Managing Partner",
+    "Senior Partner", "Managing Partner", "Partner", "Principal",
     "Chairman", "Chairwoman", "Board Member",
     "Author", "Co-Author", "Writer", "Journalist",
-    "Lawyer", "Advocate", "Attorney", "Counsel", "Barrister", "Solicitor",
-    "Doctor", "Dr.", "Physician", "Surgeon", "Specialist", "Consultant",
-    "Coach", "Executive Coach", "Mentor", "Advisor", "Senior Advisor",
-    "Speaker", "Keynote Speaker", "Public Speaker", "Presenter",
+    "Advocate", "Attorney", "Counsel", "Barrister", "Solicitor", "Lawyer",
+    "Surgeon", "Physician", "Specialist", "Consultant", "Doctor", "Dr.",
+    "Executive Coach", "Mentor", "Senior Advisor", "Advisor", "Coach",
+    "Keynote Speaker", "Public Speaker", "Speaker",
     "Professor", "Lecturer", "Researcher",
-    "Engineer", "Architect", "Designer", "Developer",
-    "Entrepreneur", "Business Owner", "Investor",
-    "Founding Partner", "Principal", "Associate",
+    "Business Owner", "Entrepreneur", "Investor",
 ]
 
 DESIGNATION_REGEX = re.compile(
-    r'\b(' + '|'.join(re.escape(k) for k in DESIGNATION_KEYWORDS) + r')\b',
+    r'\b(' + '|'.join(re.escape(k) for k in DESIGNATION_KEYWORDS) + r')(?:\s+of|\s+at|\s*[,–—])?\b',
     re.IGNORECASE,
 )
 
-# "Name, Founder at Company"
-NAME_ROLE_COMPANY_PATTERN = re.compile(
+# Testimonial block pattern: "Quote" - Name, Role at Company
+QUOTE_ATTRIBUTION_PATTERN = re.compile(
+    r'["“]([^"”]{20,500})["”]\s*[-–—\n]+\s*'
     r'([A-Z][a-zA-Z\.\-\']+(?:\s+[A-Z][a-zA-Z\.\-\']+){1,3})'
+    r'(?:[,\s\-–—]+([A-Za-z\s/]{2,40}))?'
+    r'(?:[,\s\-–—]+(?:at|of|,)?\s*([A-Z][\w\s&\.\-\']{2,50}))?'
+)
+
+# "Name, Role at Company"
+NAME_ROLE_COMPANY_PATTERN = re.compile(
+    r'\b([A-Z][a-zA-Z\.\-\']+(?:\s+[A-Z][a-zA-Z\.\-\']+){1,3})'
     r'[,\s\-–—]+'
     r'((?:Co-?)?(?:Founder|CEO|CTO|CFO|COO|CMO|President|Director|Partner|Chairman|'
-    r'Managing Director|Chief \w+ Officer|Head of [A-Za-z]+|Vice President|VP))'
+    r'Managing Director|Chief \w+ Officer|Head of [A-Za-z\s]+|Vice President|VP))'
     r'(?:\s+(?:of|at|@|,)\s+'
     r'([A-Z][a-zA-Z0-9&\-\'\.\s]{2,60}?))?'
     r'(?=[\.,;:\)\n]|$)'
 )
 
-# "Company name: TechVision, Founder: John Doe"
+# "Company: TechVision, Founder: John Doe"
 REVERSE_ROLE_PATTERN = re.compile(
-    r'(?:Company|Organi[sz]ation|Business|Firm)\s*[:–-]\s*([A-Z][\w\s&\.\-\']{2,50}?)'
-    r'[,\n;]+'
-    r'(?:Founder|CEO|Director|Contact|Executive)\s*[:–-]\s*([A-Z][a-zA-Z\.\-\']+(?:\s+[A-Z][a-zA-Z\.\-\']+){1,2})',
+    r'(?:Client|Company|Organi[sz]ation|Business|Firm)\s*[:–-]\s*([A-Z][\w\s&\.\-\']{2,50}?)'
+    r'[,\n;\s]+'
+    r'(?:Founder|CEO|Director|Contact|Executive|Owner)\s*[:–-]\s*([A-Z][a-zA-Z\.\-\']+(?:\s+[A-Z][a-zA-Z\.\-\']+){1,3})',
     re.IGNORECASE,
 )
 
-# "Mr./Ms./Dr. FirstName LastName"
-TITLED_NAME_PATTERN = re.compile(
-    r'\b(?:Mr\.?|Ms\.?|Mrs\.?|Dr\.?|Prof\.?|Sir|Madam)\s+'
-    r'([A-Z][a-zA-Z\.\-\']+(?:\s+[A-Z][a-zA-Z\.\-\']+){1,3})',
-)
-
-# "worked with FirstName LastName" / "helped FirstName LastName"
-CLIENT_CONTEXT_PATTERN = re.compile(
-    r'(?:worked with|helped|partnered with|client|testimonial from|'
-    r'case study (?:on|of|for)|transformed|built .{0,40}for)\s+'
-    r'([A-Z][a-zA-Z\.\-\']+(?:\s+[A-Z][a-zA-Z\.\-\']+){1,2})',
+# Company-only portfolio card pattern: "Client: Acme Corp" / "Project: Acme Corp" / "Our work for Acme Corp"
+COMPANY_PORTFOLIO_PATTERN = re.compile(
+    r'(?:Client|Project|Case Study|Customer|Our work for)\s*[:–\-\s]\s*'
+    r'([A-Z][a-zA-Z0-9&\.\-\']+(?:\s+[A-Z][a-zA-Z0-9&\.\-\']+){0,3})'
+    r'(?:\s+(?:was|is|has|in|delivered|scaled|featured)|[\.,\n;:]|$)',
     re.IGNORECASE,
 )
 
-RELATIONSHIP_KEYWORDS = {
-    "client_testimonial": [
-        "testimonial", "says", "highly recommend", "worked wonders",
+# Relationship keyword signals mapped to specific classifications
+RELATIONSHIP_SIGNALS = [
+    ("client_testimonial", [
+        "testimonial", "says", "said", "highly recommend", "worked wonders",
         "client feedback", "star review", "delighted with", "in their own words",
-    ],
-    "confirmed_client_case_study": [
-        "case study", "worked with", "helped", "our client", "success story",
-        "transformed", "results achieved", "growth story", "client results",
-        "we built", "we delivered",
-    ],
-    "client_portfolio_reference": [
-        "portfolio", "our work", "project for", "work delivered",
-        "featured in portfolio", "delivered for", "clients we serve",
-    ],
-    "published_customer_profile": [
-        "profile of", "spotlight on", "customer profile", "client spotlight",
-    ],
-    "featured_personality": [
+        "working with them", "pleasure to work with", "exceptional service",
+        "best decision", "great experience", "exceeded expectations"
+    ]),
+    ("confirmed_client_case_study", [
+        "case study", "client case study", "success story", "client results",
+        "how we helped", "transformed", "results achieved", "growth story",
+        "we delivered", "we built", "the challenge", "the solution", "metrics achieved",
+        "project overview", "delivered for"
+    ]),
+    ("client_portfolio_reference", [
+        "portfolio", "selected work", "our work for", "project for",
+        "featured in portfolio", "clients we serve", "featured project",
+        "client showcase"
+    ]),
+    ("published_customer_profile", [
+        "customer profile", "client spotlight", "client profile",
+        "knowledge panel for", "personal brand for", "spotlight on"
+    ]),
+    ("featured_personality", [
         "interview with", "featured on", "guest podcast", "speaker at",
-        "in conversation with",
-    ],
-    "collaborator": [
-        "partnered with", "in collaboration with", "co-authored", "joint venture",
-    ],
-}
+        "in conversation with", "guest speaker", "keynote by", "panelist"
+    ]),
+    ("collaborator", [
+        "in collaboration with", "co-authored", "joint venture", "community partner",
+        "co-hosted", "partnered with", "technology partner"
+    ]),
+    ("ordinary_mention", [
+        "quoted in", "according to", "as noted by", "referenced by", "written by",
+        "author:", "byline:", "posted by"
+    ]),
+]
 
 
 class PageAnalyzer:
-    """Rich deterministic extraction for client references."""
+    """Multi-signal deterministic extraction for verified client references."""
 
-    def analyze(self, text: str, url: str, title: str = "") -> List[Dict]:
+    def __init__(self):
+        self.name_validator = NameValidator()
+
+    def analyze(self, text: str, url: str, title: str = "") -> List[Dict[str, Any]]:
         """
-        Return a list of candidate client references with rich fields filled in
-        wherever the source text supports it. Fields that cannot be verified
-        remain None (never guessed).
+        Extract individual candidate client references with strict validation.
+        Each candidate is classified independently based on its own paragraph & context.
         """
-        if not text:
+        if not text or len(text.strip()) < 50:
             return []
 
-        # Bounded sample — cap prevents regex catastrophic backtracking cost
-        sample = text[:25000]
-        lower = sample.lower()
+        # Clean noise: remove navigation and boilerplate lines
+        cleaned_text = self._filter_boilerplate(text)
+        sample = cleaned_text[:35000]
 
-        # Determine dominant relationship type from full-page context
-        relationship_type = self._classify_relationship(lower)
+        candidates: List[Dict[str, Any]] = []
+        seen_keys = set()
 
-        candidates: List[Dict] = []
-        seen_names = set()
+        # -------------------------------------------------------------
+        # Pattern 1: Explicit Testimonial Quotes
+        # -------------------------------------------------------------
+        for match in QUOTE_ATTRIBUTION_PATTERN.finditer(sample):
+            quote = match.group(1).strip()
+            raw_name = match.group(2).strip()
+            role = match.group(3).strip() if match.group(3) else None
+            company = match.group(4).strip() if match.group(4) else None
 
-        # Pattern 1: "Name, Role at Company"
+            # Validate name
+            is_valid, reasons = self.name_validator.validate_person_name(raw_name, context=quote)
+            if not is_valid:
+                logger.debug("Testimonial name rejected: %s (%s)", raw_name, reasons)
+                continue
+
+            cleaned_name = self.name_validator.clean_name(raw_name)
+            if not cleaned_name:
+                continue
+
+            key = cleaned_name.lower()
+            if key in seen_keys:
+                continue
+            seen_keys.add(key)
+
+            evidence = f'"{quote}" — {cleaned_name}'
+            if role:
+                evidence += f', {role}'
+            if company:
+                evidence += f' at {company}'
+
+            candidates.append({
+                "person_name": cleaned_name,
+                "designation": self._clean_role(role),
+                "company_name": self._clean_company(company),
+                "relationship_type": "client_testimonial",
+                "evidence_quote": evidence[:450],
+                "confidence": 0.95,
+                "extraction_method": "deterministic_testimonial_quote",
+                "source_url": url,
+            })
+
+        # -------------------------------------------------------------
+        # Pattern 2: "Name, Role at Company"
+        # -------------------------------------------------------------
         for match in NAME_ROLE_COMPANY_PATTERN.finditer(sample):
-            name = self._clean_name(match.group(1))
-            role = self._clean_role(match.group(2))
-            company = self._clean_company(match.group(3)) if match.group(3) else None
-            if not name or name.lower() in seen_names:
+            raw_name = match.group(1).strip()
+            raw_role = match.group(2).strip()
+            raw_comp = match.group(3).strip() if match.group(3) else None
+
+            # Validate name
+            ctx = self._context(sample, match.start(), match.end(), 250)
+            is_valid, reasons = self.name_validator.validate_person_name(raw_name, context=ctx)
+            if not is_valid:
+                logger.debug("Name/Role candidate rejected: %s (%s)", raw_name, reasons)
                 continue
-            seen_names.add(name.lower())
-            evidence = self._context(sample, match.start(), match.end(), 240)
+
+            cleaned_name = self.name_validator.clean_name(raw_name)
+            if not cleaned_name:
+                continue
+
+            key = cleaned_name.lower()
+            if key in seen_keys:
+                continue
+            seen_keys.add(key)
+
+            # Classify relationship based on THIS candidate's context
+            rel_type, confidence = self._classify_candidate_relationship(ctx, cleaned_name, raw_comp)
+
+            # Ordinary mentions or unclear relationships from blog/articles are excluded
+            if rel_type in ["ordinary_mention", "unclear_relationship"] and confidence < 0.6:
+                continue
+
             candidates.append({
-                "person_name": name,
-                "designation": role,
-                "company_name": company,
-                "relationship_type": relationship_type,
-                "evidence_quote": evidence,
-                "confidence": 0.85,
-                "extraction_method": "regex_role_company",
+                "person_name": cleaned_name,
+                "designation": self._clean_role(raw_role),
+                "company_name": self._clean_company(raw_comp),
+                "relationship_type": rel_type,
+                "evidence_quote": ctx[:450],
+                "confidence": confidence,
+                "extraction_method": "deterministic_name_role_company",
+                "source_url": url,
             })
 
-        # Pattern 2: reverse "Company: X, Founder: Y"
+        # -------------------------------------------------------------
+        # Pattern 3: Reverse format "Client: X, Founder: Y"
+        # -------------------------------------------------------------
         for match in REVERSE_ROLE_PATTERN.finditer(sample):
-            company = self._clean_company(match.group(1))
-            name = self._clean_name(match.group(2))
-            if not name or name.lower() in seen_names:
+            raw_comp = match.group(1).strip()
+            raw_name = match.group(2).strip()
+
+            ctx = self._context(sample, match.start(), match.end(), 250)
+            is_valid, reasons = self.name_validator.validate_person_name(raw_name, context=ctx)
+            if not is_valid:
                 continue
-            seen_names.add(name.lower())
-            evidence = self._context(sample, match.start(), match.end(), 240)
+
+            cleaned_name = self.name_validator.clean_name(raw_name)
+            if not cleaned_name:
+                continue
+
+            key = cleaned_name.lower()
+            if key in seen_keys:
+                continue
+            seen_keys.add(key)
+
+            rel_type, confidence = self._classify_candidate_relationship(ctx, cleaned_name, raw_comp)
+
             candidates.append({
-                "person_name": name,
+                "person_name": cleaned_name,
                 "designation": "Founder/Executive",
-                "company_name": company,
-                "relationship_type": relationship_type,
-                "evidence_quote": evidence,
-                "confidence": 0.8,
-                "extraction_method": "regex_reverse_company",
+                "company_name": self._clean_company(raw_comp),
+                "relationship_type": rel_type if rel_type != "unclear_relationship" else "confirmed_client_case_study",
+                "evidence_quote": ctx[:450],
+                "confidence": max(confidence, 0.85),
+                "extraction_method": "deterministic_reverse_role",
+                "source_url": url,
             })
 
-        # Pattern 3: "worked with Name Lastname"
-        for match in CLIENT_CONTEXT_PATTERN.finditer(sample):
-            name = self._clean_name(match.group(1))
-            if not name or name.lower() in seen_names:
+        # -------------------------------------------------------------
+        # Pattern 4: Company-only portfolio references (NO fake persons)
+        # -------------------------------------------------------------
+        for match in COMPANY_PORTFOLIO_PATTERN.finditer(sample):
+            raw_comp = match.group(1).strip()
+            cleaned_comp = self._clean_company(raw_comp)
+            if not cleaned_comp:
                 continue
-            seen_names.add(name.lower())
-            ctx = self._context(sample, match.start(), match.end(), 300)
-            # Try to find a designation in the context window
-            designation_match = DESIGNATION_REGEX.search(ctx)
-            candidates.append({
-                "person_name": name,
-                "designation": designation_match.group(0) if designation_match else None,
-                "company_name": None,
-                "relationship_type": relationship_type,
-                "evidence_quote": ctx,
-                "confidence": 0.6,
-                "extraction_method": "regex_client_context",
-            })
 
-        # Pattern 4: titled names fallback (lower confidence — likely just mentions)
-        for match in TITLED_NAME_PATTERN.finditer(sample):
-            name = self._clean_name(match.group(1))
-            if not name or name.lower() in seen_names:
+            # Must not be a person name
+            is_person, _ = self.name_validator.validate_person_name(cleaned_comp)
+            if is_person:
                 continue
-            # Only include if a designation or client keyword appears nearby
+
+            comp_key = f"comp:{cleaned_comp.lower()}"
+            if comp_key in seen_keys:
+                continue
+            seen_keys.add(comp_key)
+
             ctx = self._context(sample, match.start(), match.end(), 200)
-            if not (DESIGNATION_REGEX.search(ctx) or self._has_client_signal(ctx.lower())):
-                continue
-            seen_names.add(name.lower())
-            designation_match = DESIGNATION_REGEX.search(ctx)
             candidates.append({
-                "person_name": name,
-                "designation": designation_match.group(0) if designation_match else None,
-                "company_name": None,
-                "relationship_type": relationship_type,
-                "evidence_quote": ctx,
-                "confidence": 0.5,
-                "extraction_method": "regex_titled_context",
+                "person_name": None,
+                "designation": None,
+                "company_name": cleaned_comp,
+                "relationship_type": "client_portfolio_reference",
+                "evidence_quote": ctx[:450],
+                "confidence": 0.80,
+                "extraction_method": "deterministic_company_portfolio",
+                "source_url": url,
             })
-
-        # Try to fill in missing company/designation by nearby co-occurrence
-        self._enrich_from_context(candidates, sample)
 
         return candidates
 
-    # ------------------------------------------------------------------
-    def _classify_relationship(self, lower: str) -> str:
-        for rel, keywords in RELATIONSHIP_KEYWORDS.items():
-            if any(k in lower for k in keywords):
-                return rel
-        return "unclear_relationship"
+    def _classify_candidate_relationship(
+        self, context: str, person_name: Optional[str] = None, company_name: Optional[str] = None
+    ) -> Tuple[str, float]:
+        """
+        Classify the relationship individually for a candidate using its surrounding context.
+        Returns: (relationship_type, confidence)
+        """
+        ctx_lower = context.lower()
 
-    def _has_client_signal(self, lower: str) -> bool:
-        return any(
-            k in lower
-            for keywords in RELATIONSHIP_KEYWORDS.values()
-            for k in keywords
-        )
+        # Check in order of specificity
+        for rel_type, keywords in RELATIONSHIP_SIGNALS:
+            for kw in keywords:
+                if kw in ctx_lower:
+                    if rel_type == "client_testimonial":
+                        return "client_testimonial", 0.90
+                    elif rel_type == "confirmed_client_case_study":
+                        return "confirmed_client_case_study", 0.85
+                    elif rel_type == "client_portfolio_reference":
+                        return "client_portfolio_reference", 0.80
+                    elif rel_type == "published_customer_profile":
+                        return "published_customer_profile", 0.80
+                    elif rel_type == "featured_personality":
+                        return "featured_personality", 0.70
+                    elif rel_type == "collaborator":
+                        return "collaborator", 0.70
+                    elif rel_type == "ordinary_mention":
+                        return "ordinary_mention", 0.50
+
+        # Default fallback: if no client relationship signal is present in the candidate's context
+        return "unclear_relationship", 0.40
 
     def _context(self, text: str, start: int, end: int, radius: int) -> str:
         s = max(0, start - radius)
@@ -223,58 +323,43 @@ class PageAnalyzer:
         snippet = text[s:e].strip()
         return re.sub(r'\s+', ' ', snippet)[:500]
 
-    def _clean_name(self, raw: str) -> Optional[str]:
+    def _clean_role(self, raw: Optional[str]) -> Optional[str]:
         if not raw:
             return None
-        name = raw.strip().strip(',').strip('.').strip()
-        # Must have at least 2 words, each starting with a letter
-        parts = name.split()
-        if len(parts) < 2:
+        role = raw.strip().rstrip(',.;:–—').strip()
+        if len(role) < 2 or len(role) > 60:
             return None
-        if not all(p[0].isalpha() for p in parts if p):
-            return None
-        # Reject obvious non-names
-        if any(p.lower() in {"the", "and", "with", "from", "this", "that", "our", "your"} for p in parts):
-            return None
-        return " ".join(parts[:4])
+        return role
 
-    def _clean_role(self, raw: str) -> Optional[str]:
+    def _clean_company(self, raw: Optional[str]) -> Optional[str]:
         if not raw:
             return None
-        return raw.strip().rstrip(',.;:').strip()
-
-    def _clean_company(self, raw: str) -> Optional[str]:
-        if not raw:
+        company = raw.strip().strip(',.;:–—"\'').strip()
+        # Cut off any trailing verb clause
+        company = re.split(r'\b(?:was|is|has|in|delivered|featured|scaled)\b', company, flags=re.IGNORECASE)[0].strip()
+        company = re.sub(r'\s+', ' ', company).strip(' ,.-–—')
+        if len(company) < 2 or len(company) > 70:
             return None
-        company = raw.strip().strip(',.;:').strip()
-        company = re.sub(r'\s+', ' ', company)
-        if len(company) < 2 or len(company) > 80:
+        # Reject generic navigation or stopwords as company names
+        lower = company.lower()
+        if lower in {"home", "about", "contact", "services", "team", "privacy policy", "terms of service"}:
             return None
         return company
 
-    def _enrich_from_context(self, candidates: List[Dict], text: str):
-        """
-        For candidates missing company or designation, look in a wider window
-        around the name mention to find them.
-        """
-        for cand in candidates:
-            name = cand["person_name"]
-            # Find the mention in text
-            idx = text.find(name)
-            if idx < 0:
+    def _filter_boilerplate(self, text: str) -> str:
+        """Strip navigation, cookie notices, and header/footer lines from text."""
+        lines = text.split("\n")
+        good_lines = []
+        for line in lines:
+            line_str = line.strip()
+            if not line_str:
                 continue
-            window = text[max(0, idx - 400): min(len(text), idx + 400)]
-            if not cand.get("designation"):
-                dm = DESIGNATION_REGEX.search(window)
-                if dm:
-                    cand["designation"] = dm.group(0)
-            if not cand.get("company_name"):
-                # "at <Company>" / "of <Company>"
-                cm = re.search(
-                    r'\b(?:at|of|from)\s+([A-Z][\w&\-\'\.\s]{2,60})',
-                    window,
-                )
-                if cm:
-                    company = self._clean_company(cm.group(1))
-                    if company:
-                        cand["company_name"] = company
+            lower = line_str.lower()
+            if any(term in lower for term in [
+                "all rights reserved", "cookie policy", "accept all cookies",
+                "privacy policy", "skip to content", "terms and conditions",
+                "designed by", "powered by"
+            ]):
+                continue
+            good_lines.append(line_str)
+        return "\n".join(good_lines)

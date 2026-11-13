@@ -192,34 +192,81 @@ class JobProcessor:
         company_service = CompanyService(db)
         lead_service = LeadService(db)
 
-        references_found = 0
+        # Detailed Data-Quality Metrics (Task 10)
+        pages_analysed = 0
+        candidates_detected = 0
+        valid_client_references = 0
+        company_only_references = 0
+        featured_personalities = 0
+        collaborators = 0
+        ordinary_mentions = 0
+        rejected_false_matches = 0
+        pending_verification = 0
         contacts_created = 0
         companies_created = 0
         leads_created = 0
+        confidence_bands = {"high": 0, "medium": 0, "low": 0}
+        rejected_sample: List[Dict[str, Any]] = []
 
         for page in crawled_pages:
             if page.get("status") != "success":
                 continue
+            pages_analysed += 1
             try:
-                refs = await self.client_classifier.process_page(page, provider_id)
+                refs, rejected, page_meta = await self.client_classifier.process_page_detailed(page, provider_id)
             except Exception as e:
                 logger.exception("[EXTRACTION] error for %s", page.get("url"))
                 warnings.append(_err("extraction", e, url=page.get("url"), err_type="extract"))
                 continue
 
+            candidates_detected += len(refs) + len(rejected)
+            rejected_false_matches += len(rejected)
+            for r in rejected:
+                if len(rejected_sample) < 50:
+                    rejected_sample.append({
+                        "candidate_name": r.get("person_name") or r.get("company_name") or "unknown",
+                        "rejection_reasons": r.get("rejection_reasons", []),
+                        "source_url": r.get("source_url"),
+                        "evidence_quote": (r.get("evidence_quote") or "")[:200],
+                    })
+
             for ref in refs:
                 try:
-                    # Save reference (idempotent by source_url + person_name)
-                    existing = await db.provider_client_references.find_one({
+                    rel = ref.get("relationship_type", "unclear_relationship")
+                    conf = float(ref.get("confidence", 0.5))
+                    if conf >= 0.8:
+                        confidence_bands["high"] += 1
+                    elif conf >= 0.6:
+                        confidence_bands["medium"] += 1
+                    else:
+                        confidence_bands["low"] += 1
+
+                    if not ref.get("person_name") and ref.get("company_name"):
+                        company_only_references += 1
+                    if rel == "featured_personality":
+                        featured_personalities += 1
+                    elif rel == "collaborator":
+                        collaborators += 1
+                    elif rel == "ordinary_mention":
+                        ordinary_mentions += 1
+
+                    # Save reference (idempotent by source_url + person_name/company_name)
+                    existing_query: Dict[str, Any] = {
                         "provider_id": provider_id,
                         "source_url": ref.get("source_url"),
-                        "person_name": ref.get("person_name"),
-                    })
+                    }
+                    if ref.get("person_name"):
+                        existing_query["person_name"] = ref.get("person_name")
+                    else:
+                        existing_query["company_name"] = ref.get("company_name")
+
+                    existing = await db.provider_client_references.find_one(existing_query)
                     if existing:
                         continue
 
                     ref_doc = await reference_service.create(ref)
-                    references_found += 1
+                    valid_client_references += 1
+                    pending_verification += 1
 
                     # Company
                     company_id = None
@@ -229,10 +276,10 @@ class JobProcessor:
                             "industry": ref.get("industry"),
                         })
                         company_id = comp.get("id")
-                        if comp and not comp.get("_existing"):
+                        if comp.get("created", False):
                             companies_created += 1
 
-                    # Contact
+                    # Contact (only created if a valid person name was extracted!)
                     contact_id = None
                     if ref.get("person_name"):
                         contact, was_new = await contact_service.create({
@@ -247,16 +294,15 @@ class JobProcessor:
                         if was_new:
                             contacts_created += 1
 
-                    # Lead
+                    # Lead (idempotent lead creation)
                     if contact_id:
-                        existing_lead = await db.leads.find_one({"contact_id": contact_id})
-                        if not existing_lead:
-                            await lead_service.create(
-                                contact_id=contact_id,
-                                company_id=company_id,
-                                lead_source=provider_id,
-                                initial_stage="discovered",
-                            )
+                        lead_res = await lead_service.create(
+                            contact_id=contact_id,
+                            company_id=company_id,
+                            lead_source=provider_id,
+                            initial_stage="discovered",
+                        )
+                        if lead_res.get("created", False):
                             leads_created += 1
 
                 except Exception as e:
@@ -265,11 +311,31 @@ class JobProcessor:
                         "crm", e, url=ref.get("source_url"), err_type="crm",
                     ))
 
+        # Data-quality summary dictionary
+        data_quality_metrics = {
+            "pages_processed": len([p for p in crawled_pages if p.get("status") == "success"]),
+            "pages_analysed": pages_analysed,
+            "candidates_detected": candidates_detected,
+            "valid_client_references": valid_client_references,
+            "company_only_references": company_only_references,
+            "featured_personalities": featured_personalities,
+            "collaborators": collaborators,
+            "ordinary_mentions": ordinary_mentions,
+            "rejected_false_matches": rejected_false_matches,
+            "pending_verification": pending_verification,
+            "contacts_created": contacts_created,
+            "companies_created": companies_created,
+            "leads_created": leads_created,
+            "confidence_distribution": confidence_bands,
+        }
+
         # ---------- Stage 5: Report ----------
         await self._stage(db, job_id, "generating_report", 90)
         try:
-            await self._generate_report(db, job_id, provider_id, start_url,
-                                        crawled_pages, references_found)
+            await self._generate_report(
+                db, job_id, provider_id, start_url, crawled_pages,
+                valid_client_references, data_quality_metrics, rejected_sample
+            )
         except Exception as e:
             logger.exception("[REPORT] failed")
             warnings.append(_err("report", e, err_type="report"))
@@ -278,7 +344,8 @@ class JobProcessor:
         final_status = "completed" if not warnings and not errors else "completed_with_warnings"
         await self._finish(
             db, job_id, final_status, errors, warnings,
-            references_found, contacts_created, companies_created, leads_created,
+            valid_client_references, contacts_created, companies_created, leads_created,
+            data_quality_metrics
         )
         logger.info(
             "[JOB] %s done. refs=%d contacts=%d companies=%d leads=%d",
@@ -297,22 +364,26 @@ class JobProcessor:
         )
 
     async def _finish(self, db, job_id, status, errors, warnings,
-                      refs, contacts, companies, leads):
+                      refs, contacts, companies, leads, data_quality_metrics: Optional[Dict] = None):
+        update_doc = {
+            "status": status,
+            "current_stage": "completed" if status.startswith("completed") else "failed",
+            "progress_pct": 100 if status.startswith("completed") else 0,
+            "errors": errors[-30:],
+            "warnings": warnings[-30:],
+            "references_found": refs,
+            "contacts_created": contacts,
+            "companies_created": companies,
+            "leads_created": leads,
+            "completed_at": datetime.utcnow(),
+            "updated_at": datetime.utcnow(),
+        }
+        if data_quality_metrics:
+            update_doc["data_quality_metrics"] = data_quality_metrics
+
         await db.crawl_jobs.update_one(
             {"_id": ObjectId(job_id)},
-            {"$set": {
-                "status": status,
-                "current_stage": "completed" if status.startswith("completed") else "failed",
-                "progress_pct": 100 if status.startswith("completed") else 0,
-                "errors": errors[-30:],
-                "warnings": warnings[-30:],
-                "references_found": refs,
-                "contacts_created": contacts,
-                "companies_created": companies,
-                "leads_created": leads,
-                "completed_at": datetime.utcnow(),
-                "updated_at": datetime.utcnow(),
-            }},
+            {"$set": update_doc},
         )
 
     async def _fail(self, db, job_id, error: Dict):
@@ -328,7 +399,9 @@ class JobProcessor:
         )
 
     async def _generate_report(self, db, job_id, provider_id, start_url,
-                               pages: List[Dict], references_found: int):
+                               pages: List[Dict], references_found: int,
+                               data_quality_metrics: Optional[Dict] = None,
+                               rejected_sample: Optional[List[Dict]] = None):
         success_pages = [p for p in pages if p.get("status") == "success"]
         failed_pages = [p for p in pages if p.get("status") == "failed"]
 
@@ -358,9 +431,19 @@ class JobProcessor:
             "pages_processed": len(success_pages),
             "pages_failed": len(failed_pages),
             "references_found": references_found,
+            "data_quality_metrics": data_quality_metrics or {},
+            "rejected_candidates": rejected_sample or [],
             "social_media_profiles": socials,
             "public_emails_discovered": sorted(emails),
             "failed_urls": [
+                {"url": p.get("url"), "error": p.get("error")}
+                for p in failed_pages
+            ],
+            "generated_at": datetime.utcnow(),
+        }
+        await db.research_reports.replace_one(
+            {"job_id": job_id}, report, upsert=True,
+        )
                 {"url": p.get("url"), "error": p.get("error")}
                 for p in failed_pages
             ],

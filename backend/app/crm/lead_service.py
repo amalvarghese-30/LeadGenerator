@@ -1,33 +1,85 @@
+"""
+Lead Service - CRM Lead management and idempotent deduplication.
+Fixes:
+- Stable contact/company lead identifiers handling null company IDs safely
+- Fully idempotent lead creation: re-running discovery crawls will NEVER duplicate leads
+- Explicit creation flag: (lead_dict, was_created)
+"""
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 from bson import ObjectId
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from app.models.lead import CRM_STAGES
 from app.services.scoring_service import calculate_lead_score
+from app.utils.deduplication import generate_lead_dedup_key
 
 
-def _doc_to_dict(doc: Dict) -> Dict:
-    if doc and "_id" in doc:
-        doc["id"] = str(doc.pop("_id"))
-    return doc
+def _doc_to_dict(doc: Optional[Dict]) -> Optional[Dict]:
+    if not doc:
+        return None
+    d = dict(doc)
+    if "_id" in d:
+        d["id"] = str(d.pop("_id"))
+    return d
 
 
-async def create_lead(db: AsyncIOMotorDatabase, data: Dict, user_id: Optional[str] = None) -> Dict:
+class LeadResult(dict):
+    """Backwards-compatible dictionary for lead creation."""
+    def __init__(self, lead_dict: Dict[str, Any], created: bool):
+        super().__init__()
+        self.update(lead_dict)
+        self["lead"] = lead_dict
+        self["created"] = created
+
+
+async def create_lead(
+    db: AsyncIOMotorDatabase, data: Dict[str, Any], user_id: Optional[str] = None
+) -> LeadResult:
+    """
+    Idempotently create lead or return existing lead.
+    Returns: LeadResult (behaves as dict with doc fields, plus res['created'] and res['lead'])
+    """
+    doc, was_created = await create_lead_with_status(db, data, user_id)
+    return LeadResult(lead_dict=doc, created=was_created)
+
+
+async def create_lead_with_status(
+    db: AsyncIOMotorDatabase, data: Dict[str, Any], user_id: Optional[str] = None
+) -> Tuple[Dict[str, Any], bool]:
+    """
+    Idempotently create lead or return existing lead with an explicit boolean flag.
+    Returns: (lead_dict, was_created)
+    """
     now = datetime.now(timezone.utc)
-    # Check for duplicate contact+company combo
-    existing = await db.leads.find_one({
-        "contact_id": data["contact_id"],
-        "company_id": data.get("company_id"),
-    })
-    if existing:
-        return _doc_to_dict(existing)
+    contact_id = str(data["contact_id"])
+    company_id = str(data["company_id"]) if data.get("company_id") else None
 
+    dedup_key = generate_lead_dedup_key(contact_id, company_id)
+
+    # 1. Search for existing lead with null-safe query
+    query: Dict[str, Any] = {
+        "$or": [
+            {"dedup_key": dedup_key},
+            {"contact_id": contact_id, "company_id": company_id} if company_id else {
+                "contact_id": contact_id,
+                "$or": [{"company_id": None}, {"company_id": {"$exists": False}}]
+            }
+        ]
+    }
+    existing = await db.leads.find_one(query)
+    if existing:
+        return _doc_to_dict(existing), False
+
+    # 2. Insert new lead
     doc = {
         **data,
-        "crm_stage": "discovered",
+        "contact_id": contact_id,
+        "company_id": company_id,
+        "dedup_key": dedup_key,
+        "crm_stage": data.get("crm_stage", "discovered"),
         "lead_score": 0.0,
         "lead_priority": data.get("lead_priority", "medium"),
-        "qualification_status": "unqualified",
+        "qualification_status": data.get("qualification_status", "unqualified"),
         "outreach_eligible": False,
         "follow_up_count": 0,
         "score_breakdown": {},
@@ -37,13 +89,28 @@ async def create_lead(db: AsyncIOMotorDatabase, data: Dict, user_id: Optional[st
     }
     result = await db.leads.insert_one(doc)
     doc["_id"] = result.inserted_id
-    return _doc_to_dict(doc)
+
+    # Compute initial lead score if possible
+    contact = None
+    try:
+        contact = await db.contacts.find_one({"_id": ObjectId(contact_id)})
+    except Exception:
+        pass
+    score, breakdown = calculate_lead_score(doc, contact)
+    await db.leads.update_one(
+        {"_id": doc["_id"]},
+        {"$set": {"lead_score": score, "score_breakdown": breakdown}}
+    )
+    doc["lead_score"] = score
+    doc["score_breakdown"] = breakdown
+
+    return _doc_to_dict(doc), True
 
 
 async def get_lead(db: AsyncIOMotorDatabase, lead_id: str) -> Optional[Dict]:
     try:
         doc = await db.leads.find_one({"_id": ObjectId(lead_id)})
-        return _doc_to_dict(doc) if doc else None
+        return _doc_to_dict(doc)
     except Exception:
         return None
 
@@ -86,7 +153,7 @@ async def update_lead(db: AsyncIOMotorDatabase, lead_id: str, data: Dict) -> Opt
             {"$set": data},
             return_document=True,
         )
-        return _doc_to_dict(result) if result else None
+        return _doc_to_dict(result)
     except Exception:
         return None
 
@@ -100,44 +167,15 @@ async def transition_stage(
 ) -> Optional[Dict]:
     if new_stage not in CRM_STAGES:
         raise ValueError(f"Invalid CRM stage: {new_stage}")
-
-    lead = await get_lead(db, lead_id)
-    if not lead:
-        return None
-
-    old_stage = lead.get("crm_stage")
-    now = datetime.now(timezone.utc)
-    update_data = {
+    update_data: Dict[str, Any] = {
         "crm_stage": new_stage,
-        "previous_stage": old_stage,
-        "stage_changed_at": now,
-        "last_activity": now,
-        "updated_at": now,
+        "updated_at": datetime.now(timezone.utc),
     }
-    if new_stage == "do_not_contact":
+    if new_stage == "ready_for_outreach_review":
+        update_data["outreach_eligible"] = True
+    elif new_stage in ["disqualified", "closed", "do_not_contact"]:
         update_data["outreach_eligible"] = False
-    if new_stage in ("qualified", "ready_for_outreach_review"):
-        update_data["qualification_status"] = "qualified"
-        update_data["outreach_eligible"] = new_stage == "ready_for_outreach_review"
-
-    result = await db.leads.find_one_and_update(
-        {"_id": ObjectId(lead_id)},
-        {"$set": update_data},
-        return_document=True,
-    )
-    # Record activity
-    if result:
-        await db.activities.insert_one({
-            "activity_type": "status_change",
-            "lead_id": lead_id,
-            "from_stage": old_stage,
-            "to_stage": new_stage,
-            "description": reason,
-            "created_by": user_id,
-            "created_at": now,
-            "updated_at": now,
-        })
-    return _doc_to_dict(result) if result else None
+    return await update_lead(db, lead_id, update_data)
 
 
 async def qualify_lead(
@@ -161,7 +199,6 @@ async def qualify_lead(
 
 
 async def recalculate_lead_score(db: AsyncIOMotorDatabase, lead_id: str) -> Optional[Dict]:
-    """Recalculate and persist lead score."""
     lead = await get_lead(db, lead_id)
     if not lead:
         return None
@@ -176,30 +213,55 @@ class LeadService:
     def __init__(self, db: AsyncIOMotorDatabase):
         self.db = db
 
-    async def create(self, contact_id: str, company_id: Optional[str] = None, lead_source: Optional[str] = None, initial_stage: str = "discovered", user_id: Optional[str] = None) -> Dict:
+    async def create(
+        self,
+        contact_id: str,
+        company_id: Optional[str] = None,
+        lead_source: Optional[str] = None,
+        initial_stage: str = "discovered",
+        user_id: Optional[str] = None,
+    ) -> LeadResult:
         data = {
             "contact_id": contact_id,
             "company_id": company_id,
             "lead_source": lead_source,
             "crm_stage": initial_stage,
         }
-        return await create_lead(self.db, data, user_id)
+        doc, was_created = await create_lead(self.db, data, user_id)
+        return LeadResult(lead_dict=doc, created=was_created)
 
     async def get_by_id(self, lead_id: str) -> Optional[Dict]:
         return await get_lead(self.db, lead_id)
 
-    async def list(self, skip: int = 0, limit: int = 20, crm_stage: Optional[str] = None, owner: Optional[str] = None, lead_priority: Optional[str] = None, outreach_eligible: Optional[bool] = None, qualification_status: Optional[str] = None, sort_by: str = "created_at", sort_dir: int = -1) -> Tuple[List[Dict], int]:
-        return await list_leads(self.db, skip, limit, crm_stage, owner, lead_priority, outreach_eligible, qualification_status, sort_by, sort_dir)
+    async def list(
+        self,
+        skip: int = 0,
+        limit: int = 20,
+        crm_stage: Optional[str] = None,
+        owner: Optional[str] = None,
+        lead_priority: Optional[str] = None,
+        outreach_eligible: Optional[bool] = None,
+        qualification_status: Optional[str] = None,
+        sort_by: str = "created_at",
+        sort_dir: int = -1,
+    ) -> Tuple[List[Dict], int]:
+        return await list_leads(
+            self.db, skip, limit, crm_stage, owner, lead_priority,
+            outreach_eligible, qualification_status, sort_by, sort_dir
+        )
 
     async def update(self, lead_id: str, data: Dict) -> Optional[Dict]:
         return await update_lead(self.db, lead_id, data)
 
     async def delete(self, lead_id: str) -> bool:
-        return await delete_lead(self.db, lead_id)
+        try:
+            result = await self.db.leads.delete_one({"_id": ObjectId(lead_id)})
+            return result.deleted_count > 0
+        except Exception:
+            return False
 
     async def change_stage(self, lead_id: str, new_stage: str, user_id: Optional[str] = None, note: Optional[str] = None) -> Optional[Dict]:
         return await transition_stage(self.db, lead_id, new_stage, user_id, note)
 
     async def qualify(self, lead_id: str, qualification_status: str = "qualified", user_id: Optional[str] = None, reason: Optional[str] = None) -> Optional[Dict]:
         return await qualify_lead(self.db, lead_id, qualification_status, user_id, reason)
-
