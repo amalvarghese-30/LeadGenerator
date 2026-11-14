@@ -7,6 +7,7 @@ from app.services.export_service import (
     export_leads_to_excel,
     export_providers_to_csv,
     export_contacts_to_csv,
+    export_companies_to_csv,
 )
 
 router = APIRouter(prefix="/export", tags=["Exports"])
@@ -70,4 +71,23 @@ async def export_contacts_route(
         content=content,
         media_type="text/csv",
         headers={"Content-Disposition": "attachment; filename=contacts_export.csv"}
+    )
+
+@router.get("/companies")
+async def export_companies_route(
+    industry: Optional[str] = None,
+    country: Optional[str] = None,
+    db: AsyncIOMotorDatabase = Depends(get_db),
+    _user: dict = Depends(get_current_user),
+):
+    filters = {}
+    if industry:
+        filters["industry"] = industry
+    if country:
+        filters["country"] = country
+    content = await export_companies_to_csv(db, filters)
+    return Response(
+        content=content,
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=companies_export.csv"}
     )

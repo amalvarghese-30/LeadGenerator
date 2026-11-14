@@ -17,6 +17,7 @@ async def get_db() -> AsyncGenerator[AsyncIOMotorDatabase, None]:
 
 async def get_current_user(
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
+    token: Optional[str] = None,
     db: AsyncIOMotorDatabase = Depends(get_db),
 ) -> dict:
     """Validate JWT and return the current user document."""
@@ -26,11 +27,12 @@ async def get_current_user(
         headers={"WWW-Authenticate": "Bearer"},
     )
 
-    if credentials is None:
+    raw_token = credentials.credentials if credentials else token
+    if not raw_token:
         raise credentials_exception
 
     try:
-        payload = decode_token(credentials.credentials)
+        payload = decode_token(raw_token)
         if not payload:
             raise credentials_exception
         user_id: str = payload.get("sub")

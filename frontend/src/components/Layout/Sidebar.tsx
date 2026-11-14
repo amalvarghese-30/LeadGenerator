@@ -28,7 +28,6 @@ export const Sidebar: React.FC<SidebarProps> = ({ collapsed, onToggle }) => {
     { label: 'Leads', to: '/leads', icon: Users },
     { label: 'Contacts', to: '/contacts', icon: UserCheck },
     { label: 'Companies', to: '/companies', icon: Briefcase },
-    { label: 'Tasks & Follow-ups', to: '/tasks', icon: CheckSquare },
     { label: 'Discovery', to: '/discovery', icon: Sparkles },
     { label: 'Reports', to: '/reports', icon: BarChart3 },
     { label: 'Settings', to: '/settings', icon: Settings },

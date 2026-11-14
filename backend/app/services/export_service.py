@@ -81,3 +81,16 @@ async def export_contacts_to_csv(db: AsyncIOMotorDatabase, filters: Optional[Dic
     buf = io.BytesIO()
     df.to_csv(buf, index=False)
     return buf.getvalue()
+
+
+async def export_companies_to_csv(db: AsyncIOMotorDatabase, filters: Optional[Dict] = None) -> bytes:
+    query = filters or {}
+    cursor = db.companies.find(query).sort("created_at", -1).limit(10000)
+    docs = await cursor.to_list(length=10000)
+    for d in docs:
+        d["id"] = str(d.pop("_id", ""))
+    records = _stringify_dates(docs)
+    df = pd.DataFrame(records)
+    buf = io.BytesIO()
+    df.to_csv(buf, index=False)
+    return buf.getvalue()

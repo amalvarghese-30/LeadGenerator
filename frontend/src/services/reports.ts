@@ -21,20 +21,48 @@ export const getPipelineReports = async (): Promise<any> => {
   return res.data;
 };
 
-export const exportLeads = (format: 'csv' | 'excel' = 'csv', crm_stage?: string) => {
-  const params = new URLSearchParams({ format });
-  if (crm_stage) params.append('crm_stage', crm_stage);
-  window.open(`${api.defaults.baseURL}/export/leads?${params.toString()}`, '_blank');
+const downloadExportFile = async (endpoint: string, filename: string, params?: Record<string, string>) => {
+  const res = await api.get(endpoint, {
+    params,
+    responseType: 'blob',
+  });
+  const blob = new Blob([res.data], {
+    type: filename.endsWith('.xlsx')
+      ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+      : 'text/csv',
+  });
+  const url = window.URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  window.URL.revokeObjectURL(url);
 };
 
-export const exportProviders = (category?: string) => {
-  const params = new URLSearchParams();
-  if (category) params.append('category', category);
-  window.open(`${api.defaults.baseURL}/export/providers?${params.toString()}`, '_blank');
+export const exportLeads = async (format: 'csv' | 'excel' = 'csv', crm_stage?: string) => {
+  const params: Record<string, string> = { format };
+  if (crm_stage) params.crm_stage = crm_stage;
+  const filename = format === 'excel' ? 'leads_export.xlsx' : 'leads_export.csv';
+  await downloadExportFile('/export/leads', filename, params);
 };
 
-export const exportContacts = (verification_status?: string) => {
-  const params = new URLSearchParams();
-  if (verification_status) params.append('verification_status', verification_status);
-  window.open(`${api.defaults.baseURL}/export/contacts?${params.toString()}`, '_blank');
+export const exportProviders = async (category?: string) => {
+  const params: Record<string, string> = {};
+  if (category) params.category = category;
+  await downloadExportFile('/export/providers', 'providers_export.csv', params);
+};
+
+export const exportContacts = async (verification_status?: string) => {
+  const params: Record<string, string> = {};
+  if (verification_status) params.verification_status = verification_status;
+  await downloadExportFile('/export/contacts', 'contacts_export.csv', params);
+};
+
+export const exportCompanies = async (industry?: string, country?: string) => {
+  const params: Record<string, string> = {};
+  if (industry) params.industry = industry;
+  if (country) params.country = country;
+  await downloadExportFile('/export/companies', 'companies_export.csv', params);
 };

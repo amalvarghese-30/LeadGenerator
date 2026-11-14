@@ -3,10 +3,13 @@ import {
   Briefcase,
   Search,
   Globe,
+  Download,
 } from 'lucide-react';
 import { getCompanies } from '../../services/companies';
+import { exportCompanies } from '../../services/reports';
 import { Company } from '../../types';
 import { Card } from '../../components/ui/Card';
+import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
 import { Badge } from '../../components/ui/Badge';
 import { Pagination } from '../../components/ui/Pagination';
@@ -70,11 +73,21 @@ export const Companies: React.FC = () => {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-xl font-bold text-slate-900 tracking-tight">Client Companies & Organizations</h1>
-        <p className="text-xs text-slate-500 mt-0.5">
-          Organizations associated with identified client references, case studies, and corporate leaders.
-        </p>
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div>
+          <h1 className="text-xl font-bold text-slate-900 tracking-tight">Client Companies & Organizations</h1>
+          <p className="text-xs text-slate-500 mt-0.5">
+            Organizations associated with identified client references, case studies, and corporate leaders.
+          </p>
+        </div>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => exportCompanies()}
+          leftIcon={<Download className="w-4 h-4" />}
+        >
+          Export Companies
+        </Button>
       </div>
 
       <Card className="p-4">
