@@ -45,11 +45,19 @@ class DDGSSearch:
             # Import dynamically to tolerate missing module
             from ddgs import DDGS
             with DDGS() as ddgs:
-                raw_results = list(ddgs.text(
-                    query,
-                    region=eff_region,
-                    max_results=eff_limit
-                ))
+                try:
+                    raw_results = list(ddgs.text(
+                        query,
+                        region=eff_region,
+                        max_results=eff_limit,
+                        backend="html"
+                    ))
+                except Exception:
+                    raw_results = list(ddgs.text(
+                        query,
+                        region=eff_region,
+                        max_results=eff_limit
+                    ))
 
                 for r in raw_results:
                     url = r.get("href") or r.get("url") or ""

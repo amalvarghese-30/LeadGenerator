@@ -291,9 +291,10 @@ class JobProcessor:
                         if comp.get("created", False):
                             companies_created += 1
 
-                    # Contact (only created if a valid person name was extracted!)
+                    # Contact (created for every valid reference: person or company client)
                     contact_id = None
-                    if ref.get("person_name"):
+                    target_contact_name = ref.get("person_name") or ref.get("company_name")
+                    if target_contact_name:
                         prof_urls = {}
                         for soc in page.get("social_profiles", []):
                             plat = soc.get("platform", "").lower()
@@ -324,7 +325,7 @@ class JobProcessor:
                             })
 
                         # Email channels
-                        is_profile_page = bool(ref.get("person_name", "").lower() in source_url.lower())
+                        is_profile_page = bool(target_contact_name.lower() in source_url.lower())
                         for em in page_emails:
                             scope = "person_direct_work" if is_profile_page else "company_generic"
                             initial_channels.append({
@@ -374,7 +375,7 @@ class JobProcessor:
                         # Check Schema.org Persons
                         for sp in page.get("schema_persons", []):
                             sp_name = sp.get("name") or ""
-                            if ref["person_name"].lower() in sp_name.lower():
+                            if target_contact_name.lower() in sp_name.lower():
                                 if sp.get("email"):
                                     initial_channels.append({
                                         "type": "email",
@@ -412,8 +413,8 @@ class JobProcessor:
                             b_contacts["phone"] = contact_phone
 
                         contact, was_new = await contact_service.create({
-                            "full_name": ref["person_name"],
-                            "designation": ref.get("designation"),
+                            "full_name": target_contact_name,
+                            "designation": ref.get("designation") or ("Client Account / Executive Office" if not ref.get("person_name") else "Executive"),
                             "company_id": company_id,
                             "company_name": ref.get("company_name"),
                             "contact_verification_status": "discovered",
