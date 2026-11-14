@@ -18,6 +18,7 @@ from app.enrichment.contact_page_discovery import ContactPageDiscovery
 from app.enrichment.public_email_extractor import PublicEmailExtractor
 from app.enrichment.public_phone_extractor import PublicPhoneExtractor
 from app.enrichment.business_directory_discovery import BusinessDirectoryDiscovery
+from app.enrichment.public_social_discovery import PublicSocialDiscovery
 from app.enrichment.contact_validator import ContactValidator
 from app.enrichment.contact_source_verifier import ContactSourceVerifier
 from app.enrichment.enrichment_deduplication import EnrichmentDeduplication
@@ -33,6 +34,7 @@ class ContactEnrichmentService:
     def __init__(self):
         self.website_discovery = WebsiteDiscovery()
         self.directory_discovery = BusinessDirectoryDiscovery()
+        self.social_discovery = PublicSocialDiscovery()
         self.content_extractor = ContentExtractor()
 
     async def enrich_contact(self, db: AsyncIOMotorDatabase, contact_id: str) -> Dict[str, Any]:
@@ -241,6 +243,19 @@ class ContactEnrichmentService:
                     except Exception as crawl_err:
                         logger.debug(f"Target crawl notice for {target_url}: {crawl_err}")
 
+            # 6b. Public Social Media, Profiles & Registry Discovery Pass
+            try:
+                social_channels = self.social_discovery.search_social_and_forums(
+                    full_name=identity.full_name,
+                    company_name=identity.company_name,
+                    designation=identity.designation,
+                    existing_socials=contact.get("professional_urls") or {}
+                )
+                for sc in social_channels:
+                    discovered_raw_channels.append(sc)
+            except Exception as soc_err:
+                logger.debug("Social and registry discovery notice for %s: %s", identity.full_name, soc_err)
+
             # 7. Validate and verify each discovered channel
             processed_channels: List[Dict[str, Any]] = []
             for ch in discovered_raw_channels:
@@ -365,6 +380,19 @@ class ContactEnrichmentService:
                 updates["phone"] = best_phone
                 b_contacts["phone"] = best_phone
             updates["business_contacts"] = b_contacts
+
+            # If new social profiles were discovered, persist to professional_urls and linkedin_url
+            best_linkedin = next((c["value"] for c in final_channels if c["type"] == "social" and "linkedin.com" in c["value"]), None)
+            if best_linkedin and not contact.get("linkedin_url"):
+                updates["linkedin_url"] = best_linkedin
+
+            prof_urls = dict(contact.get("professional_urls") or {})
+            for sc in final_channels:
+                if sc["type"] == "social":
+                    for plat in ("linkedin", "twitter", "instagram", "github", "youtube"):
+                        if plat in sc["value"]:
+                            prof_urls.setdefault(plat, sc["value"])
+            updates["professional_urls"] = prof_urls
 
             await db.contacts.update_one({"_id": contact["_id"]}, {"$set": updates})
 
