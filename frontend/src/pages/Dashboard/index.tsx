@@ -5,11 +5,17 @@ import {
   Users,
   CheckCircle2,
   Clock,
-  Award,
-  Calendar,
   Sparkles,
   ArrowUpRight,
   TrendingUp,
+  UserCheck,
+  Briefcase,
+  Globe,
+  Radar,
+  Gauge,
+  Activity,
+  Layers,
+  ChevronRight,
 } from 'lucide-react';
 import {
   BarChart,
@@ -21,11 +27,15 @@ import {
   PieChart,
   Pie,
   Cell,
+  CartesianGrid,
 } from 'recharts';
 import { getDashboardStats, getLeadsReports, getProviderReports } from '../../services/reports';
-import { DashboardStats } from '../../types';
+import { getCrawlJobs } from '../../services/discovery';
+import { getRateLimitMetrics } from '../../services/rateLimits';
+import { DashboardStats, CrawlJob, RateLimitSummary } from '../../types';
 import { Card } from '../../components/ui/Card';
 import { Button } from '../../components/ui/Button';
+import { Badge } from '../../components/ui/Badge';
 import { LoadingSpinner } from '../../components/ui/LoadingSpinner';
 
 const COLORS = ['#2563eb', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#64748b'];
@@ -34,19 +44,25 @@ export const Dashboard: React.FC = () => {
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [leadsReport, setLeadsReport] = useState<any>(null);
   const [providerReport, setProviderReport] = useState<any>(null);
+  const [recentJobs, setRecentJobs] = useState<CrawlJob[]>([]);
+  const [rateLimitSummary, setRateLimitSummary] = useState<RateLimitSummary | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
     const fetchData = async () => {
       try {
-        const [dashRes, leadsRes, provRes] = await Promise.all([
+        const [dashRes, leadsRes, provRes, jobsRes, rateRes] = await Promise.all([
           getDashboardStats().catch(() => null),
           getLeadsReports().catch(() => null),
           getProviderReports().catch(() => null),
+          getCrawlJobs({ page: 1, page_size: 5 }).catch(() => null),
+          getRateLimitMetrics().catch(() => null),
         ]);
         if (dashRes) setStats(dashRes);
         if (leadsRes) setLeadsReport(leadsRes);
         if (provRes) setProviderReport(provRes);
+        if (jobsRes) setRecentJobs(jobsRes.items || []);
+        if (rateRes) setRateLimitSummary(rateRes);
       } finally {
         setIsLoading(false);
       }
@@ -55,198 +71,326 @@ export const Dashboard: React.FC = () => {
   }, []);
 
   if (isLoading) {
-    return <LoadingSpinner message="Aggregating pipeline metrics..." />;
+    return <LoadingSpinner message="Aggregating pipeline telemetry and intelligence..." />;
   }
 
-  // Fallback demo numbers if database is newly initialized
+  // Exact real metrics
   const displayStats = stats || {
-    total_providers: 12,
-    verified_providers: 9,
-    total_leads: 48,
-    verified_leads: 28,
-    outreach_ready_leads: 18,
-    follow_ups_due: 5,
-    new_leads_7d: 14,
-    total_contacts: 54,
-    total_companies: 39,
-    pending_crawl_jobs: 1,
+    total_providers: 0,
+    verified_providers: 0,
+    total_leads: 0,
+    verified_leads: 0,
+    outreach_ready_leads: 0,
+    follow_ups_due: 0,
+    new_leads_7d: 0,
+    total_contacts: 0,
+    total_companies: 0,
+    pending_crawl_jobs: 0,
   };
 
-  // Prepare chart data
   const stageData = leadsReport?.by_stage
     ? Object.entries(leadsReport.by_stage).map(([stage, d]: [string, any]) => ({
         name: stage.replace(/_/g, ' '),
         count: d.count || 0,
       }))
-    : [
-        { name: 'Discovered', count: 18 },
-        { name: 'Pending Review', count: 12 },
-        { name: 'Verified', count: 10 },
-        { name: 'Qualified', count: 8 },
-        { name: 'Contacted', count: 5 },
-      ];
+    : [];
 
   const categoryData = providerReport?.by_category
     ? Object.entries(providerReport.by_category).map(([cat, count]: [string, any]) => ({
         name: cat.replace(/_/g, ' '),
         value: count || 0,
       }))
-    : [
-        { name: 'Knowledge Panel', value: 5 },
-        { name: 'Personal Branding', value: 4 },
-        { name: 'Entity SEO', value: 2 },
-        { name: 'Reputation Mgt', value: 1 },
-      ];
+    : [];
 
   return (
     <div className="space-y-6">
-      {/* Top Banner */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-gradient-to-r from-blue-700 via-blue-800 to-indigo-900 rounded-2xl p-6 text-white shadow-xl shadow-blue-900/10">
+      {/* Header Banner */}
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
-          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-blue-500/30 text-[11px] font-semibold text-blue-100 uppercase tracking-wider mb-2 border border-blue-400/20">
-            <Sparkles className="w-3 h-3 text-blue-300" /> Reference Provider: theperson.in
-          </span>
-          <h1 className="text-xl sm:text-2xl font-bold tracking-tight">Provider Intelligence & Lead Discovery</h1>
-          <p className="text-xs text-blue-200 mt-1 max-w-xl">
-            Identifying personal branding, Knowledge Panel & Entity SEO competitors, discovering client evidence, and managing qualified CRM prospects.
+          <h1 className="text-xl font-bold tracking-tight text-slate-900">Operations Command Center</h1>
+          <p className="text-xs text-slate-500 mt-1">
+            Real-time pipeline analytics, cross-provider intelligence, and autonomous discovery health.
           </p>
         </div>
-        <div className="flex items-center gap-2.5 shrink-0">
-          <Link to="/discovery">
-            <Button variant="secondary" size="md" leftIcon={<Sparkles className="w-4 h-4 text-blue-600" />}>
-              Start Discovery
+        <div className="flex items-center gap-2">
+          <Link to="/lead-generator">
+            <Button variant="primary" size="sm">
+              <Sparkles className="w-3.5 h-3.5 mr-1.5" />
+              Launch Lead Generator
             </Button>
           </Link>
-          <Link to="/leads">
-            <Button variant="outline" size="md" className="border-white/20 text-white bg-white/10 hover:bg-white/20">
-              View CRM Leads
+          <Link to="/website-intelligence">
+            <Button variant="secondary" size="sm">
+              <Globe className="w-3.5 h-3.5 mr-1.5" />
+              Scan Website
             </Button>
           </Link>
         </div>
       </div>
 
-      {/* KPI Stat Cards */}
+      {/* Top Level Metric Cards */}
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3.5">
-        <Card className="p-4">
-          <div className="flex items-center justify-between text-slate-500 text-xs font-semibold uppercase tracking-wider mb-2">
-            <span>Providers</span>
-            <Building2 className="w-4 h-4 text-blue-600" />
-          </div>
-          <div className="text-2xl font-bold text-slate-900">{displayStats.total_providers}</div>
-          <div className="text-[11px] text-slate-400 mt-1 flex items-center gap-1">
-            <TrendingUp className="w-3 h-3 text-emerald-500" /> {displayStats.verified_providers} verified
-          </div>
+        <Card className="p-4 border-l-4 border-l-blue-600">
+          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Total Leads</span>
+          <p className="text-xl font-black text-slate-900 mt-1">{displayStats.total_leads}</p>
+          <span className="text-[10px] text-slate-500 mt-0.5 block">{displayStats.new_leads_7d} new past 7 days</span>
         </Card>
 
-        <Card className="p-4">
-          <div className="flex items-center justify-between text-slate-500 text-xs font-semibold uppercase tracking-wider mb-2">
-            <span>Prospect Leads</span>
-            <Users className="w-4 h-4 text-indigo-600" />
-          </div>
-          <div className="text-2xl font-bold text-slate-900">{displayStats.total_leads}</div>
-          <div className="text-[11px] text-emerald-600 font-medium mt-1">+{displayStats.new_leads_7d} this week</div>
+        <Card className="p-4 border-l-4 border-l-emerald-600">
+          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Contacts</span>
+          <p className="text-xl font-black text-emerald-600 mt-1">{displayStats.total_contacts}</p>
+          <span className="text-[10px] text-slate-500 mt-0.5 block">Verified profiles</span>
         </Card>
 
-        <Card className="p-4">
-          <div className="flex items-center justify-between text-slate-500 text-xs font-semibold uppercase tracking-wider mb-2">
-            <span>Verified</span>
-            <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-          </div>
-          <div className="text-2xl font-bold text-slate-900">{displayStats.verified_leads}</div>
-          <div className="text-[11px] text-slate-400 mt-1">Evidence confirmed</div>
+        <Card className="p-4 border-l-4 border-l-indigo-600">
+          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Companies</span>
+          <p className="text-xl font-black text-indigo-600 mt-1">{displayStats.total_companies}</p>
+          <span className="text-[10px] text-slate-500 mt-0.5 block">Unique organizations</span>
         </Card>
 
-        <Card className="p-4">
-          <div className="flex items-center justify-between text-slate-500 text-xs font-semibold uppercase tracking-wider mb-2">
-            <span>Qualified</span>
-            <Award className="w-4 h-4 text-purple-600" />
-          </div>
-          <div className="text-2xl font-bold text-slate-900">{displayStats.outreach_ready_leads}</div>
-          <div className="text-[11px] text-purple-600 font-medium mt-1">Ready for review</div>
+        <Card className="p-4 border-l-4 border-l-purple-600">
+          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Providers</span>
+          <p className="text-xl font-black text-purple-600 mt-1">{displayStats.total_providers}</p>
+          <span className="text-[10px] text-slate-500 mt-0.5 block">{displayStats.verified_providers} verified</span>
         </Card>
 
-        <Card className="p-4">
-          <div className="flex items-center justify-between text-slate-500 text-xs font-semibold uppercase tracking-wider mb-2">
-            <span>Follow-ups Due</span>
-            <Calendar className="w-4 h-4 text-amber-600" />
-          </div>
-          <div className="text-2xl font-bold text-slate-900">{displayStats.follow_ups_due}</div>
-          <div className="text-[11px] text-amber-600 font-medium mt-1">Action needed</div>
+        <Card className="p-4 border-l-4 border-l-amber-600">
+          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Outreach Ready</span>
+          <p className="text-xl font-black text-amber-600 mt-1">{displayStats.outreach_ready_leads}</p>
+          <span className="text-[10px] text-slate-500 mt-0.5 block">{displayStats.follow_ups_due} follow-ups</span>
         </Card>
 
-        <Card className="p-4">
-          <div className="flex items-center justify-between text-slate-500 text-xs font-semibold uppercase tracking-wider mb-2">
-            <span>Active Jobs</span>
-            <Clock className="w-4 h-4 text-slate-600" />
-          </div>
-          <div className="text-2xl font-bold text-slate-900">{displayStats.pending_crawl_jobs}</div>
-          <div className="text-[11px] text-slate-400 mt-1">Background crawling</div>
+        <Card className="p-4 border-l-4 border-l-sky-600">
+          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Crawler Health</span>
+          <p className="text-xl font-black text-sky-600 mt-1">
+            {rateLimitSummary ? `${rateLimitSummary.total_requests} reqs` : '100%'}
+          </p>
+          <span className="text-[10px] text-sky-700 mt-0.5 block">
+            {rateLimitSummary ? `${rateLimitSummary.throttled_429_count} throttled` : 'Zero errors'}
+          </span>
         </Card>
       </div>
 
-      {/* Visual Charts */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <Card className="lg:col-span-2 p-5">
-          <div className="flex items-center justify-between mb-4">
-            <div>
-              <h3 className="text-sm font-bold text-slate-900">Leads by CRM Pipeline Stage</h3>
-              <p className="text-xs text-slate-500">Distribution across qualification and outreach stages</p>
-            </div>
-            <Link to="/leads" className="text-xs font-semibold text-blue-600 hover:text-blue-700 flex items-center gap-1">
-              View CRM Pipeline <ArrowUpRight className="w-3.5 h-3.5" />
-            </Link>
-          </div>
-          <div className="h-64">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={stageData}>
-                <XAxis dataKey="name" stroke="#94a3b8" fontSize={11} tickLine={false} />
-                <YAxis stroke="#94a3b8" fontSize={11} tickLine={false} />
-                <Tooltip
-                  contentStyle={{ backgroundColor: '#ffffff', borderRadius: '8px', border: '1px solid #e2e8f0', fontSize: '12px' }}
-                />
-                <Bar dataKey="count" fill="#2563eb" radius={[4, 4, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        </Card>
+      {/* Intelligence Modules Fast Jump Grid */}
+      <div>
+        <h2 className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-3">
+          Intelligence & Discovery Workspaces
+        </h2>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
+          <Link to="/lead-generator" className="group">
+            <Card className="p-4 h-full border border-slate-200/80 hover:border-blue-400 hover:shadow-md transition-all">
+              <div className="flex items-center justify-between mb-2">
+                <div className="w-8 h-8 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center">
+                  <Sparkles className="w-4 h-4" />
+                </div>
+                <ArrowUpRight className="w-4 h-4 text-slate-400 group-hover:text-blue-600 transition-colors" />
+              </div>
+              <h3 className="text-xs font-bold text-slate-900 group-hover:text-blue-600 transition-colors">
+                Lead Generator
+              </h3>
+              <p className="text-[11px] text-slate-500 mt-1 leading-relaxed">
+                Company & individual search with entity classification and direct CRM saving.
+              </p>
+            </Card>
+          </Link>
 
-        <Card className="p-5">
-          <div className="mb-4">
-            <h3 className="text-sm font-bold text-slate-900">Providers by Category</h3>
-            <p className="text-xs text-slate-500">Target market alignment</p>
+          <Link to="/auto-profile-creator" className="group">
+            <Card className="p-4 h-full border border-slate-200/80 hover:border-indigo-400 hover:shadow-md transition-all">
+              <div className="flex items-center justify-between mb-2">
+                <div className="w-8 h-8 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center">
+                  <UserCheck className="w-4 h-4" />
+                </div>
+                <ArrowUpRight className="w-4 h-4 text-slate-400 group-hover:text-indigo-600 transition-colors" />
+              </div>
+              <h3 className="text-xs font-bold text-slate-900 group-hover:text-indigo-600 transition-colors">
+                Auto Profile Creator
+              </h3>
+              <p className="text-[11px] text-slate-500 mt-1 leading-relaxed">
+                Cross-platform executive profile synthesis with corroborated identity evidence.
+              </p>
+            </Card>
+          </Link>
+
+          <Link to="/competitor-intelligence" className="group">
+            <Card className="p-4 h-full border border-slate-200/80 hover:border-purple-400 hover:shadow-md transition-all">
+              <div className="flex items-center justify-between mb-2">
+                <div className="w-8 h-8 rounded-xl bg-purple-50 text-purple-600 flex items-center justify-center">
+                  <Radar className="w-4 h-4" />
+                </div>
+                <ArrowUpRight className="w-4 h-4 text-slate-400 group-hover:text-purple-600 transition-colors" />
+              </div>
+              <h3 className="text-xs font-bold text-slate-900 group-hover:text-purple-600 transition-colors">
+                Competitor Intelligence
+              </h3>
+              <p className="text-[11px] text-slate-500 mt-1 leading-relaxed">
+                Scan provider competitors, discover client references, and monitor services.
+              </p>
+            </Card>
+          </Link>
+
+          <Link to="/rate-limit-checker" className="group">
+            <Card className="p-4 h-full border border-slate-200/80 hover:border-emerald-400 hover:shadow-md transition-all">
+              <div className="flex items-center justify-between mb-2">
+                <div className="w-8 h-8 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center">
+                  <Gauge className="w-4 h-4" />
+                </div>
+                <ArrowUpRight className="w-4 h-4 text-slate-400 group-hover:text-emerald-600 transition-colors" />
+              </div>
+              <h3 className="text-xs font-bold text-slate-900 group-hover:text-emerald-600 transition-colors">
+                Rate Limit Checker
+              </h3>
+              <p className="text-[11px] text-slate-500 mt-1 leading-relaxed">
+                Telemetry for HTTP 429 throttling, response latency, and adaptive crawl delays.
+              </p>
+            </Card>
+          </Link>
+        </div>
+      </div>
+
+      {/* Visual Analytics */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+        {/* Pipeline Stage Distribution */}
+        <div className="lg:col-span-8">
+          <Card className="p-5 h-full">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-sm font-bold text-slate-900">Lead Pipeline Distribution</h2>
+              <Link to="/leads" className="text-xs font-semibold text-blue-600 hover:underline">
+                View CRM Leads
+              </Link>
+            </div>
+            {stageData.length === 0 ? (
+              <div className="h-60 flex items-center justify-center text-xs text-slate-400">
+                No active leads in pipeline yet.
+              </div>
+            ) : (
+              <div className="h-60 w-full">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={stageData} margin={{ top: 10, right: 10, left: -20, bottom: 20 }}>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                    <XAxis dataKey="name" tick={{ fontSize: 10, fill: '#64748b' }} interval={0} angle={-15} textAnchor="end" />
+                    <YAxis tick={{ fontSize: 10, fill: '#64748b' }} />
+                    <Tooltip contentStyle={{ borderRadius: 12, fontSize: 12, border: '1px solid #e2e8f0' }} />
+                    <Bar dataKey="count" fill="#2563eb" radius={[4, 4, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            )}
+          </Card>
+        </div>
+
+        {/* Category Share */}
+        <div className="lg:col-span-4">
+          <Card className="p-5 h-full flex flex-col justify-between">
+            <div>
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-sm font-bold text-slate-900">Provider Categories</h2>
+                <Link to="/providers" className="text-xs font-semibold text-blue-600 hover:underline">
+                  All Providers
+                </Link>
+              </div>
+              {categoryData.length === 0 ? (
+                <div className="h-48 flex items-center justify-center text-xs text-slate-400">
+                  No providers categorized yet.
+                </div>
+              ) : (
+                <div className="h-48 w-full flex items-center justify-center">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
+                      <Pie
+                        data={categoryData}
+                        innerRadius={45}
+                        outerRadius={70}
+                        paddingAngle={4}
+                        dataKey="value"
+                      >
+                        {categoryData.map((_, index) => (
+                          <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                        ))}
+                      </Pie>
+                      <Tooltip contentStyle={{ borderRadius: 12, fontSize: 12, border: '1px solid #e2e8f0' }} />
+                    </PieChart>
+                  </ResponsiveContainer>
+                </div>
+              )}
+            </div>
+
+            <div className="space-y-1.5 pt-3 border-t border-slate-100">
+              {categoryData.slice(0, 4).map((c, i) => (
+                <div key={c.name} className="flex items-center justify-between text-xs">
+                  <div className="flex items-center gap-2">
+                    <span
+                      className="w-2.5 h-2.5 rounded-full shrink-0"
+                      style={{ backgroundColor: COLORS[i % COLORS.length] }}
+                    />
+                    <span className="text-slate-600 capitalize">{c.name}</span>
+                  </div>
+                  <span className="font-bold text-slate-800">{c.value}</span>
+                </div>
+              ))}
+            </div>
+          </Card>
+        </div>
+      </div>
+
+      {/* Recent Intelligence Jobs */}
+      <Card className="p-5">
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-2">
+            <Activity className="w-4 h-4 text-blue-600" />
+            <h2 className="text-sm font-bold text-slate-900">Recent Intelligence Scans</h2>
           </div>
-          <div className="h-52 flex items-center justify-center">
-            <ResponsiveContainer width="100%" height="100%">
-              <PieChart>
-                <Pie
-                  data={categoryData}
-                  cx="50%"
-                  cy="50%"
-                  innerRadius={50}
-                  outerRadius={75}
-                  paddingAngle={4}
-                  dataKey="value"
-                >
-                  {categoryData.map((_, index) => (
-                    <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                  ))}
-                </Pie>
-                <Tooltip
-                  contentStyle={{ backgroundColor: '#ffffff', borderRadius: '8px', border: '1px solid #e2e8f0', fontSize: '12px' }}
-                />
-              </PieChart>
-            </ResponsiveContainer>
+          <Link to="/website-intelligence" className="text-xs font-semibold text-blue-600 hover:underline">
+            All Scans
+          </Link>
+        </div>
+
+        {recentJobs.length === 0 ? (
+          <div className="py-6 text-center text-xs text-slate-400">
+            No intelligence scans executed yet. Start one from Website Intelligence.
           </div>
-          <div className="grid grid-cols-2 gap-2 mt-2 pt-3 border-t border-slate-100 text-[11px]">
-            {categoryData.slice(0, 4).map((c, idx) => (
-              <div key={c.name} className="flex items-center gap-1.5 truncate">
-                <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: COLORS[idx % COLORS.length] }} />
-                <span className="text-slate-600 truncate">{c.name}</span>
+        ) : (
+          <div className="divide-y divide-slate-100">
+            {recentJobs.map((j) => (
+              <div key={j.id} className="py-3 flex items-center justify-between gap-4">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-bold text-slate-900 font-mono truncate">
+                      {j.starting_url}
+                    </span>
+                    <Badge
+                      variant={
+                        j.status.startsWith('completed')
+                          ? 'success'
+                          : j.status === 'failed'
+                          ? 'danger'
+                          : j.status === 'cancelled'
+                          ? 'warning'
+                          : 'info'
+                      }
+                    >
+                      {j.status.replace(/_/g, ' ')}
+                    </Badge>
+                  </div>
+                  <p className="text-[11px] text-slate-500 mt-0.5">
+                    {j.pages_crawled} crawled • {j.references_found} references • {j.leads_created} leads •{' '}
+                    {new Date(j.created_at).toLocaleDateString()}
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-2 shrink-0">
+                  {j.status.startsWith('completed') && (
+                    <Link to={`/reports/${j.id}`}>
+                      <Button variant="secondary" size="sm">
+                        View Report
+                      </Button>
+                    </Link>
+                  )}
+                </div>
               </div>
             ))}
           </div>
-        </Card>
-      </div>
+        )}
+      </Card>
     </div>
   );
 };

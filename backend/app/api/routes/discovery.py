@@ -1,8 +1,10 @@
+import json
 import logging
-from datetime import datetime
-from typing import Optional, Dict, Any
+from datetime import datetime, timezone
+from typing import Optional, Dict, Any, List
 from bson import ObjectId
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import StreamingResponse
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.auth.dependencies import get_db, get_current_user
@@ -10,6 +12,7 @@ from app.discovery.ddgs_search import DDGSSearch
 from app.discovery.google_dorking import GoogleDorkingHelper
 from app.schemas.discovery import SearchRequest
 from app.schemas.common import PaginatedResponse, paginate, build_skip_limit
+from app.utils.job_logger import log_job_event, stream_manager
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/discovery", tags=["Discovery"])
@@ -18,9 +21,17 @@ router = APIRouter(prefix="/discovery", tags=["Discovery"])
 def _fmt_job(doc: dict) -> dict:
     if "_id" in doc:
         doc["id"] = str(doc.pop("_id"))
-    for f in ("created_at", "started_at", "completed_at", "updated_at", "locked_at"):
+    for f in ("created_at", "started_at", "completed_at", "updated_at", "locked_at", "cancelled_at"):
         if doc.get(f) and hasattr(doc[f], "isoformat"):
             doc[f] = doc[f].isoformat()
+    return doc
+
+
+def _fmt_event(doc: dict) -> dict:
+    if "_id" in doc:
+        doc["id"] = str(doc.pop("_id"))
+    if doc.get("event_timestamp") and hasattr(doc["event_timestamp"], "isoformat"):
+        doc["event_timestamp"] = doc["event_timestamp"].isoformat()
     return doc
 
 
@@ -55,6 +66,7 @@ async def research_provider_route(
     if active:
         return _fmt_job(active)
 
+    now = datetime.now(timezone.utc)
     job_doc = {
         "provider_id": provider_id,
         "starting_url": target_url,
@@ -74,8 +86,8 @@ async def research_provider_route(
         "errors": [],
         "warnings": [],
         "created_by": str(user.get("_id", "")),
-        "created_at": datetime.utcnow(),
-        "updated_at": datetime.utcnow(),
+        "created_at": now,
+        "updated_at": now,
     }
     result = await db.crawl_jobs.insert_one(job_doc)
     job_doc["_id"] = result.inserted_id
@@ -85,6 +97,12 @@ async def research_provider_route(
         {"$set": {"discovery_status": "researching",
                   "crawl_job_id": str(result.inserted_id)}},
     )
+
+    await log_job_event(
+        db, str(result.inserted_id), "queued", "info", "job_created",
+        f"Research job queued for provider {provider.get('name', 'Unknown')}"
+    )
+
     return _fmt_job(job_doc)
 
 
@@ -123,6 +141,58 @@ async def get_job_route(
     return _fmt_job(doc)
 
 
+@router.get("/jobs/{job_id}/events")
+async def get_job_events_route(
+    job_id: str,
+    db: AsyncIOMotorDatabase = Depends(get_db),
+    _user: dict = Depends(get_current_user),
+):
+    """Retrieve historical persistent events for a research job."""
+    docs = await db.job_events.find({"job_id": job_id}).sort("event_timestamp", 1).to_list(500)
+    return [_fmt_event(d) for d in docs]
+
+
+@router.get("/jobs/{job_id}/events/stream")
+async def stream_job_events(
+    job_id: str,
+    db: AsyncIOMotorDatabase = Depends(get_db),
+):
+    """
+    Server-Sent Events (SSE) live activity stream for a research job.
+    """
+    queue = await stream_manager.subscribe(job_id)
+
+    async def event_generator():
+        # First send past events
+        past = await db.job_events.find({"job_id": job_id}).sort("event_timestamp", 1).to_list(100)
+        for ev in past:
+            yield f"data: {json.dumps(_fmt_event(ev))}\n\n"
+
+        try:
+            while True:
+                # Wait for next live broadcast
+                try:
+                    event = await asyncio.wait_for(queue.get(), timeout=20.0)
+                    yield f"data: {json.dumps(event)}\n\n"
+                    if event.get("event_type") in ("job_completed", "job_failed", "job_cancelled"):
+                        break
+                except asyncio.TimeoutError:
+                    # Keep-alive heartbeat
+                    yield ": ping\n\n"
+        finally:
+            await stream_manager.unsubscribe(job_id, queue)
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
 @router.get("/jobs/{job_id}/report")
 async def get_job_report(
     job_id: str,
@@ -145,13 +215,34 @@ async def cancel_job_route(
     db: AsyncIOMotorDatabase = Depends(get_db),
     _user: dict = Depends(get_current_user),
 ):
+    """
+    Cancel a pending or running research job.
+    Releases locks, records cancellation timestamp and reason, and logs cancellation event.
+    """
+    now = datetime.now(timezone.utc)
     res = await db.crawl_jobs.update_one(
         {"_id": ObjectId(job_id), "status": {"$in": ["pending", "running"]}},
-        {"$set": {"status": "cancelled", "completed_at": datetime.utcnow()}},
+        {"$set": {
+            "status": "cancelled",
+            "current_stage": "cancelled",
+            "completed_at": now,
+            "cancelled_at": now,
+            "cancellation_reason": "user_cancelled",
+            "lock_key": None,
+            "locked_at": None,
+            "updated_at": now,
+        }},
     )
     if res.modified_count == 0:
-        raise HTTPException(400, "Job cannot be cancelled")
-    return {"message": "Cancelled"}
+        raise HTTPException(400, "Job is not in a cancellable state")
+
+    await log_job_event(
+        db, job_id, "cancelled", "warning", "job_cancelled",
+        "Job was cancelled by user request",
+        metadata={"cancelled_at": now.isoformat(), "cancellation_reason": "user_cancelled"}
+    )
+
+    return {"message": "Job successfully marked for cancellation", "job_id": job_id}
 
 
 @router.post("/jobs/{job_id}/retry")
@@ -163,6 +254,8 @@ async def retry_job_route(
     job = await db.crawl_jobs.find_one({"_id": ObjectId(job_id)})
     if not job:
         raise HTTPException(404, "Job not found")
+
+    now = datetime.now(timezone.utc)
     res = await db.crawl_jobs.update_one(
         {"_id": ObjectId(job_id)},
         {"$set": {
@@ -184,9 +277,15 @@ async def retry_job_route(
             "locked_at": None,
             "started_at": None,
             "completed_at": None,
+            "cancelled_at": None,
+            "cancellation_reason": None,
             "retry_count": job.get("retry_count", 0) + 1,
-            "updated_at": datetime.utcnow(),
+            "updated_at": now,
         }},
+    )
+    await log_job_event(
+        db, job_id, "queued", "info", "job_retried",
+        f"Job re-queued for retry (retry_count={job.get('retry_count', 0) + 1})"
     )
     return {"message": "Job re-queued", "modified": res.modified_count}
 

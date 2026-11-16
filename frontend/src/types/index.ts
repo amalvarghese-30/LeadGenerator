@@ -200,7 +200,8 @@ export interface CrawlJob {
   | 'enriching_contacts'
   | 'generating_report'
   | 'completed'
-  | 'failed';
+  | 'failed'
+  | 'cancelled';
   progress_pct: number;
 
   pages_discovered: number;
@@ -273,4 +274,113 @@ export interface IntegrationStatus {
   is_optional: boolean;
   message: string;
   model?: string;
+}
+
+export interface JobEvent {
+  id?: string;
+  job_id: string;
+  event_timestamp: string;
+  stage: string;
+  severity: 'info' | 'warning' | 'error' | 'success';
+  event_type: string;
+  message: string;
+  url?: string;
+  metadata?: Record<string, any>;
+}
+
+export interface Competitor {
+  id: string;
+  name: string;
+  website?: string;
+  domain?: string;
+  business_category?: string;
+  social_profiles?: Array<{ platform: string; url: string }>;
+  services?: string[];
+  ad_references?: Array<Record<string, any>>;
+  client_references?: Array<Record<string, any>>;
+  evidence?: Array<Record<string, any>>;
+  notes?: string;
+  last_research_date?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface RateLimitMetric {
+  id?: string;
+  domain: string;
+  timestamp: string;
+  status_code?: number;
+  response_time_ms: number;
+  is_throttled: boolean;
+  retry_after?: number;
+  rate_limit_headers?: Record<string, string>;
+  error_type?: string;
+  action_taken?: string;
+}
+
+export interface DomainRateLimit {
+  domain: string;
+  requests: number;
+  success: number;
+  throttled_429: number;
+  forbidden_403: number;
+  errors: number;
+  error_rate_pct: number;
+  avg_response_time_ms: number;
+  configured_delay_seconds: number;
+  concurrency: number;
+  last_throttled_at?: string;
+  last_retry_after?: number;
+}
+
+export interface RateLimitSummary {
+  total_requests: number;
+  successful_requests: number;
+  throttled_429_count: number;
+  forbidden_403_count: number;
+  other_error_count: number;
+  error_percentage: number;
+  average_response_time_ms: number;
+  active_monitored_domains: number;
+  recent_events: RateLimitMetric[];
+}
+
+export interface SearchResultCandidate {
+  title: string;
+  url: string;
+  domain?: string;
+  snippet?: string;
+  entity_type: 'individual' | 'company' | 'organisation' | 'unknown';
+  classification_reason?: string;
+  needs_review?: boolean;
+  social_platform?: string;
+  is_official_website?: boolean;
+  confidence: number;
+  evidence_points?: string[];
+  corroborated_company?: boolean;
+  corroborated_title?: boolean;
+  is_duplicate_domain?: boolean;
+}
+
+export interface ProfileCandidate {
+  id?: string;
+  full_name: string;
+  company_name?: string;
+  designation?: string;
+  location?: string;
+  confidence_score: number;
+  confidence_level: 'low' | 'medium' | 'high';
+  platform_profiles: Record<string, string>;
+  professional_biography?: string;
+  evidence_items: Array<{
+    type: string;
+    platform?: string;
+    url?: string;
+    source_url?: string;
+    title?: string;
+    evidence_quote?: string;
+    confidence?: number;
+  }>;
+  verification_status: 'pending_review' | 'confirmed' | 'rejected';
+  created_at?: string;
 }

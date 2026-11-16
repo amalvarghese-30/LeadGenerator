@@ -87,4 +87,34 @@ async def create_indexes(db: AsyncIOMotorDatabase) -> None:
         IndexModel([("due_date", ASCENDING)], name="tasks_due_date"),
     ])
 
+    await db.job_events.create_indexes([
+        IndexModel([("job_id", ASCENDING)], name="job_events_job_id"),
+        IndexModel([("event_timestamp", ASCENDING)], name="job_events_timestamp_asc"),
+        IndexModel([("stage", ASCENDING)], name="job_events_stage"),
+        IndexModel([("severity", ASCENDING)], name="job_events_severity"),
+    ])
+
+    await db.competitors.create_indexes([
+        IndexModel([("domain", ASCENDING)], sparse=True, name="competitors_domain"),
+        IndexModel([("name", TEXT), ("business_category", TEXT)], name="competitors_text_search"),
+        IndexModel([("created_at", DESCENDING)], name="competitors_created_at"),
+    ])
+
+    await db.rate_limit_metrics.create_indexes([
+        IndexModel([("domain", ASCENDING)], name="rate_limits_domain"),
+        IndexModel([("timestamp", DESCENDING)], name="rate_limits_timestamp"),
+        IndexModel([("is_throttled", ASCENDING)], name="rate_limits_throttled"),
+    ])
+
+    await db.search_history.create_indexes([
+        IndexModel([("search_type", ASCENDING)], name="search_history_type"),
+        IndexModel([("created_at", DESCENDING)], name="search_history_created_at"),
+    ])
+
+    await db.profile_candidates.create_indexes([
+        IndexModel([("full_name", TEXT), ("company_name", TEXT)], name="profile_candidates_text"),
+        IndexModel([("verification_status", ASCENDING)], name="profile_candidates_status"),
+        IndexModel([("created_at", DESCENDING)], name="profile_candidates_created_at"),
+    ])
+
     logger.info("All MongoDB indexes created successfully.")

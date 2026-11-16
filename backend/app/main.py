@@ -25,6 +25,10 @@ from app.api.routes import (
     exports,
     settings as settings_router,
     references,
+    lead_generator,
+    profile_creator,
+    competitors,
+    rate_limits,
 )
 
 # Configure structured logging
@@ -93,6 +97,10 @@ app.include_router(reports.router, prefix="/api")
 app.include_router(exports.router, prefix="/api")
 app.include_router(settings_router.router, prefix="/api")
 app.include_router(references.router, prefix="/api")
+app.include_router(lead_generator.router, prefix="/api")
+app.include_router(profile_creator.router, prefix="/api")
+app.include_router(competitors.router, prefix="/api")
+app.include_router(rate_limits.router, prefix="/api")
 
 @app.get("/api/health")
 async def health_check():

@@ -11,6 +11,10 @@ from . import (
     exports,
     settings,
     references,
+    lead_generator,
+    profile_creator,
+    competitors,
+    rate_limits,
 )
 
 __all__ = [
@@ -26,4 +30,8 @@ __all__ = [
     "exports",
     "settings",
     "references",
+    "lead_generator",
+    "profile_creator",
+    "competitors",
+    "rate_limits",
 ]

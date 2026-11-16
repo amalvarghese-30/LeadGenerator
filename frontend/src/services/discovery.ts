@@ -49,6 +49,15 @@ export const retryCrawlJob = async (id: string): Promise<void> => {
   await api.post(`/discovery/jobs/${id}/retry`);
 };
 
+export const getJobEvents = async (id: string) => {
+  const res = await api.get(`/discovery/jobs/${id}/events`);
+  return res.data;
+};
+
+export const getJobEventsStreamUrl = (id: string) => {
+  return `/api/discovery/jobs/${id}/events/stream`;
+};
+
 export const getDorkingQueries = async (domain: string, brand_name?: string) => {
   const res = await api.get('/discovery/dorking', { params: { domain, brand_name } });
   return res.data;
