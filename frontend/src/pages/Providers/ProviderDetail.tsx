@@ -29,10 +29,12 @@ import { Card } from '../../components/ui/Card';
 import { Button } from '../../components/ui/Button';
 import { Badge } from '../../components/ui/Badge';
 import { LoadingSpinner } from '../../components/ui/LoadingSpinner';
+import { useToast } from '../../context/ToastContext';
 import { formatDate, formatDateTime } from '../../utils/format';
 
 export const ProviderDetail: React.FC = () => {
   const { id } = useParams<{ id: string }>();
+  const { toast } = useToast();
   const [provider, setProvider] = useState<Provider | null>(null);
   const [references, setReferences] = useState<Reference[]>([]);
   const [jobs, setJobs] = useState<CrawlJob[]>([]);
@@ -77,9 +79,10 @@ export const ProviderDetail: React.FC = () => {
     setIsResearching(true);
     try {
       await startProviderResearch(id);
+      toast.success('Research job dispatched to background crawler');
       await fetchData();
     } catch (err: any) {
-      alert(err.response?.data?.detail || 'Failed to dispatch research job');
+      toast.error(err.response?.data?.detail || 'Failed to dispatch research job');
     } finally {
       setIsResearching(false);
     }
@@ -89,9 +92,10 @@ export const ProviderDetail: React.FC = () => {
     setRetryingJobId(jobId);
     try {
       await retryCrawlJob(jobId);
+      toast.success('Crawl job retry initiated');
       await fetchData();
     } catch (err: any) {
-      alert(err.response?.data?.detail || 'Failed to retry job');
+      toast.error(err.response?.data?.detail || 'Failed to retry job');
     } finally {
       setRetryingJobId(null);
     }

@@ -209,6 +209,29 @@ async def recalculate_lead_score(db: AsyncIOMotorDatabase, lead_id: str) -> Opti
     return await update_lead(db, lead_id, {"lead_score": score, "score_breakdown": breakdown})
 
 
+async def delete_lead(db: AsyncIOMotorDatabase, lead_id: str, user_id: Optional[str] = None) -> bool:
+    try:
+        lead = await db.leads.find_one({"_id": ObjectId(lead_id)})
+        if not lead:
+            return False
+        now = datetime.now(timezone.utc)
+        try:
+            await db.audit_logs.insert_one({
+                "action": "delete_lead",
+                "target_id": lead_id,
+                "target_type": "lead",
+                "user_id": user_id,
+                "timestamp": now,
+                "details": {"contact_id": lead.get("contact_id"), "company_id": lead.get("company_id")}
+            })
+        except Exception:
+            pass
+        result = await db.leads.delete_one({"_id": ObjectId(lead_id)})
+        return result.deleted_count > 0
+    except Exception:
+        return False
+
+
 class LeadService:
     def __init__(self, db: AsyncIOMotorDatabase):
         self.db = db

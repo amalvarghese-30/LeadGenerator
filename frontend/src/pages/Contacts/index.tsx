@@ -39,9 +39,11 @@ import { Badge } from '../../components/ui/Badge';
 import { Pagination } from '../../components/ui/Pagination';
 import { LoadingSpinner } from '../../components/ui/LoadingSpinner';
 import { EmptyState } from '../../components/ui/EmptyState';
+import { useToast } from '../../context/ToastContext';
 import { formatDate } from '../../utils/format';
 
 export const Contacts: React.FC = () => {
+  const { toast } = useToast();
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -114,8 +116,9 @@ export const Contacts: React.FC = () => {
         setSelectedContact(res.contact);
       }
       await fetchContacts();
+      toast.success('Contact enriched successfully');
     } catch (err: any) {
-      alert(err.response?.data?.detail || 'Enrichment failed');
+      toast.error(err.response?.data?.detail || 'Enrichment failed');
     } finally {
       setEnrichingIds((prev) => {
         const next = new Set(prev);
@@ -132,8 +135,9 @@ export const Contacts: React.FC = () => {
       await enrichBatch(Array.from(selectedIds));
       setSelectedIds(new Set());
       await fetchContacts();
+      toast.success('Batch enrichment completed');
     } catch (err: any) {
-      alert(err.response?.data?.detail || 'Batch enrichment failed');
+      toast.error(err.response?.data?.detail || 'Batch enrichment failed');
     } finally {
       setIsBulkEnriching(false);
     }
@@ -142,6 +146,7 @@ export const Contacts: React.FC = () => {
   const handleSuppress = async (id: string) => {
     if (confirm('Mark this contact as Do-Not-Contact and add to suppression list?')) {
       await suppressContact(id, 'User requested suppression');
+      toast.success('Contact marked as Do-Not-Contact');
       fetchContacts();
     }
   };
@@ -149,6 +154,7 @@ export const Contacts: React.FC = () => {
   const handleDelete = async (id: string) => {
     if (confirm('Delete this contact?')) {
       await deleteContact(id);
+      toast.success('Contact deleted');
       fetchContacts();
     }
   };
@@ -158,9 +164,10 @@ export const Contacts: React.FC = () => {
     try {
       const updated = await verifyContactChannel(selectedContact.id, channelIdx);
       setSelectedContact(updated);
+      toast.success('Channel verified');
       fetchContacts();
     } catch (err: any) {
-      alert(err.response?.data?.detail || 'Channel verification failed');
+      toast.error(err.response?.data?.detail || 'Channel verification failed');
     }
   };
 
@@ -171,9 +178,10 @@ export const Contacts: React.FC = () => {
     try {
       const updated = await rejectContactChannel(selectedContact.id, channelIdx, reason);
       setSelectedContact(updated);
+      toast.success('Channel marked as rejected');
       fetchContacts();
     } catch (err: any) {
-      alert(err.response?.data?.detail || 'Channel rejection failed');
+      toast.error(err.response?.data?.detail || 'Channel rejection failed');
     }
   };
 
@@ -195,9 +203,10 @@ export const Contacts: React.FC = () => {
       setNewChannelValue('');
       setNewChannelSourceUrl('');
       setNewChannelEvidence('');
+      toast.success('Channel added to contact');
       fetchContacts();
     } catch (err: any) {
-      alert(err.response?.data?.detail || 'Failed to add contact channel');
+      toast.error(err.response?.data?.detail || 'Failed to add contact channel');
     }
   };
 

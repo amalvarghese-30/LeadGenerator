@@ -17,16 +17,18 @@ import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
 import { Badge } from '../../components/ui/Badge';
 import { LoadingSpinner } from '../../components/ui/LoadingSpinner';
+import { useToast } from '../../context/ToastContext';
 
 export const Settings: React.FC = () => {
+  const { toast } = useToast();
   const [appConfig, setAppConfig] = useState<any>(null);
   const [integrations, setIntegrations] = useState<IntegrationStatus[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isSaving, setIsSaving] = useState(false);
 
   // Editable fields
   const [delaySeconds, setDelaySeconds] = useState('1.5');
   const [maxPages, setMaxPages] = useState('50');
-  const [isSaved, setIsSaved] = useState(false);
 
   useEffect(() => {
     const fetchSettings = async () => {
@@ -35,7 +37,15 @@ export const Settings: React.FC = () => {
           getAppSettings().catch(() => null),
           getIntegrationsHealth().catch(() => ({ integrations: [] })),
         ]);
-        if (confRes) setAppConfig(confRes);
+        if (confRes) {
+          setAppConfig(confRes);
+          if (confRes.crawler?.delay_seconds) {
+            setDelaySeconds(String(confRes.crawler.delay_seconds));
+          }
+          if (confRes.crawler?.max_pages) {
+            setMaxPages(String(confRes.crawler.max_pages));
+          }
+        }
         if (intRes?.integrations) setIntegrations(intRes.integrations);
       } finally {
         setIsLoading(false);
@@ -44,47 +54,30 @@ export const Settings: React.FC = () => {
     fetchSettings();
   }, []);
 
-  const handleSave = (e: React.FormEvent) => {
+  const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
-    setIsSaved(true);
-    setTimeout(() => setIsSaved(false), 2500);
+    setIsSaving(true);
+    try {
+      const delay = parseFloat(delaySeconds);
+      const pages = parseInt(maxPages, 10);
+      const { updateAppSettings } = await import('../../services/settings');
+      await updateAppSettings({
+        crawler: {
+          delay_seconds: isNaN(delay) ? 1.5 : delay,
+          max_pages: isNaN(pages) ? 50 : pages,
+        },
+      });
+      toast.success('Crawler and system settings persisted successfully to database');
+    } catch (err: any) {
+      toast.error(err.response?.data?.detail || 'Failed to save settings');
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   if (isLoading) {
     return <LoadingSpinner message="Checking system & integration health..." />;
   }
-
-  const defaultIntegrations: IntegrationStatus[] = integrations.length > 0 ? integrations : [
-    {
-      name: 'MongoDB Database',
-      id: 'mongodb',
-      status: 'connected',
-      is_optional: false,
-      message: 'Local MongoDB cluster connected and active',
-    },
-    {
-      name: 'DuckDuckGo Discovery (DDGS)',
-      id: 'ddgs',
-      status: 'active',
-      is_optional: false,
-      message: 'Zero-key free discovery engine operational',
-    },
-    {
-      name: 'NVIDIA Nemotron AI',
-      id: 'nvidia',
-      status: 'not_configured',
-      is_optional: true,
-      message: 'Running in deterministic NLP fallback mode (spaCy NER + Heuristics)',
-      model: 'nvidia/nemotron-mini-4b-instruct',
-    },
-    {
-      name: 'SearXNG (Self-Hosted)',
-      id: 'searxng',
-      status: 'not_configured',
-      is_optional: true,
-      message: 'Optional secondary metasearch engine',
-    },
-  ];
 
   return (
     <div className="space-y-6 max-w-4xl">
@@ -107,34 +100,40 @@ export const Settings: React.FC = () => {
         </div>
 
         <div className="divide-y divide-slate-100">
-          {defaultIntegrations.map((item) => (
-            <div key={item.id} className="py-3 flex items-center justify-between text-xs">
-              <div className="space-y-0.5">
-                <div className="font-semibold text-slate-800 flex items-center gap-2">
-                  <span>{item.name}</span>
-                  {item.is_optional && <span className="text-[10px] text-slate-400 font-normal">(Optional)</span>}
-                </div>
-                <div className="text-[11px] text-slate-500">{item.message}</div>
-                {item.model && <div className="text-[10px] font-mono text-slate-400">Model: {item.model}</div>}
-              </div>
-
-              <div>
-                {item.status === 'connected' || item.status === 'active' ? (
-                  <Badge variant="success" className="py-1 px-2.5">
-                    <CheckCircle2 className="w-3 h-3" /> Active
-                  </Badge>
-                ) : item.status === 'not_configured' ? (
-                  <Badge variant="default" className="py-1 px-2.5">
-                    NLP Fallback Active
-                  </Badge>
-                ) : (
-                  <Badge variant="danger" className="py-1 px-2.5">
-                    <AlertCircle className="w-3 h-3" /> Disconnected
-                  </Badge>
-                )}
-              </div>
+          {integrations.length === 0 ? (
+            <div className="py-4 text-center text-xs text-slate-400">
+              No active integration status reported by backend.
             </div>
-          ))}
+          ) : (
+            integrations.map((item) => (
+              <div key={item.id} className="py-3 flex items-center justify-between text-xs">
+                <div className="space-y-0.5">
+                  <div className="font-semibold text-slate-800 flex items-center gap-2">
+                    <span>{item.name}</span>
+                    {item.is_optional && <span className="text-[10px] text-slate-400 font-normal">(Optional)</span>}
+                  </div>
+                  <div className="text-[11px] text-slate-500">{item.message}</div>
+                  {item.model && <div className="text-[10px] font-mono text-slate-400">Model: {item.model}</div>}
+                </div>
+
+                <div>
+                  {item.status === 'connected' || item.status === 'active' ? (
+                    <Badge variant="success" className="py-1 px-2.5">
+                      <CheckCircle2 className="w-3 h-3" /> Active
+                    </Badge>
+                  ) : item.status === 'not_configured' ? (
+                    <Badge variant="default" className="py-1 px-2.5">
+                      NLP Fallback Active
+                    </Badge>
+                  ) : (
+                    <Badge variant="danger" className="py-1 px-2.5">
+                      <AlertCircle className="w-3 h-3" /> Disconnected
+                    </Badge>
+                  )}
+                </div>
+              </div>
+            ))
+          )}
         </div>
       </Card>
 
@@ -179,9 +178,8 @@ export const Settings: React.FC = () => {
             </p>
           </div>
 
-          <div className="pt-2 flex items-center justify-between">
-            <span className="text-xs text-emerald-600 font-medium">{isSaved ? 'Settings saved successfully!' : ''}</span>
-            <Button type="submit" variant="primary" size="md" leftIcon={<Save className="w-4 h-4" />}>
+          <div className="pt-2 flex items-center justify-end">
+            <Button type="submit" variant="primary" size="md" isLoading={isSaving} leftIcon={<Save className="w-4 h-4" />}>
               Save Preferences
             </Button>
           </div>

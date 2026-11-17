@@ -12,9 +12,11 @@ import { Card } from '../../components/ui/Card';
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
 import { Badge } from '../../components/ui/Badge';
+import { useToast } from '../../context/ToastContext';
 
 export const Discovery: React.FC = () => {
   const navigate = useNavigate();
+  const { toast } = useToast();
   const [activeTab, setActiveTab] = useState<'search' | 'website'>('search');
 
   const [searchQuery, setSearchQuery] = useState('Google Knowledge Panel services India');
@@ -84,8 +86,9 @@ export const Discovery: React.FC = () => {
         description: result.snippet,
       });
       setAddedDomains(new Set([...addedDomains, result.domain || result.url]));
+      toast.success('Provider saved successfully');
     } catch (err: any) {
-      alert(err.response?.data?.detail || 'Failed to save provider');
+      toast.error(err.response?.data?.detail || 'Failed to save provider');
     }
   };
 

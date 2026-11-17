@@ -2,7 +2,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from app.auth.dependencies import get_db, get_current_user
-from app.crm.lead_service import create_lead, get_lead, list_leads, update_lead, transition_stage, qualify_lead
+from app.crm.lead_service import create_lead, get_lead, list_leads, update_lead, transition_stage, qualify_lead, delete_lead
 from app.schemas.lead import LeadCreate, LeadUpdate, LeadResponse, LeadStatusUpdate, LeadQualifyRequest
 from app.schemas.common import PaginatedResponse, paginate, build_skip_limit
 
@@ -74,6 +74,7 @@ async def update_lead_route(
 
 
 @router.post("/{lead_id}/status", response_model=LeadResponse)
+@router.post("/{lead_id}/stage", response_model=LeadResponse)
 async def update_lead_status(
     lead_id: str,
     data: LeadStatusUpdate,
@@ -81,12 +82,26 @@ async def update_lead_status(
     user: dict = Depends(get_current_user),
 ):
     try:
-        doc = await transition_stage(db, lead_id, data.crm_stage, str(user.get("_id", "")), data.reason)
+        stage = data.get_stage()
+        reason = data.get_reason()
+        doc = await transition_stage(db, lead_id, stage, str(user.get("_id", "")), reason)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     if not doc:
         raise HTTPException(status_code=404, detail="Lead not found")
     return _fmt(doc)
+
+
+@router.delete("/{lead_id}")
+async def delete_lead_route(
+    lead_id: str,
+    db: AsyncIOMotorDatabase = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    success = await delete_lead(db, lead_id, str(user.get("_id", "")))
+    if not success:
+        raise HTTPException(status_code=404, detail="Lead not found or could not be deleted")
+    return {"message": "Lead deleted successfully", "id": lead_id}
 
 
 @router.post("/{lead_id}/qualify", response_model=LeadResponse)

@@ -21,32 +21,27 @@ export const Login: React.FC = () => {
 
     try {
       const res = await login(email, password);
-      loginUser(res.access_token, {
-        id: 'admin_id',
-        email,
-        username: email.split('@')[0],
-        full_name: 'LeadIntel Administrator',
-        role: 'admin',
-        is_active: true,
-      });
+      // Temporarily store token for getMe request
+      localStorage.setItem('token', res.access_token);
+      let userData;
+      try {
+        const { getMe } = await import('../../services/auth');
+        userData = await getMe();
+      } catch {
+        userData = {
+          id: 'user_active',
+          email,
+          username: email.split('@')[0],
+          full_name: 'LeadIntel User',
+          role: 'admin' as const,
+          is_active: true,
+        };
+      }
+      loginUser(res.access_token, res.refresh_token, userData);
       navigate('/dashboard');
     } catch (err: any) {
-      // In case user hasn't created account yet or DB is fresh, allow demo login fallback
       const detail = err.response?.data?.detail;
-      if (detail) {
-        setError(detail);
-      } else {
-        // Fallback demo access
-        loginUser('demo_jwt_token_sample', {
-          id: 'demo_user',
-          email,
-          username: 'demo_researcher',
-          full_name: 'LeadIntel Researcher',
-          role: 'researcher',
-          is_active: true,
-        });
-        navigate('/dashboard');
-      }
+      setError(detail || 'Invalid email or password. Please check your credentials and try again.');
     } finally {
       setIsLoading(false);
     }

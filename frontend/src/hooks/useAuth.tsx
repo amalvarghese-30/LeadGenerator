@@ -7,7 +7,7 @@ interface AuthContextType {
   token: string | null;
   isAuthenticated: boolean;
   isLoading: boolean;
-  loginUser: (token: string, user: User) => void;
+  loginUser: (accessToken: string, refreshToken: string, user: User) => void;
   logoutUser: () => void;
 }
 
@@ -39,15 +39,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     initAuth();
   }, []);
 
-  const loginUser = (newToken: string, newUser: User) => {
-    localStorage.setItem('token', newToken);
+  const loginUser = (newAccessToken: string, newRefreshToken: string, newUser: User) => {
+    localStorage.setItem('token', newAccessToken);
+    if (newRefreshToken) {
+      localStorage.setItem('refresh_token', newRefreshToken);
+    }
     localStorage.setItem('user', JSON.stringify(newUser));
-    setToken(newToken);
+    setToken(newAccessToken);
     setUser(newUser);
   };
 
   const logoutUser = () => {
     localStorage.removeItem('token');
+    localStorage.removeItem('refresh_token');
     localStorage.removeItem('user');
     setToken(null);
     setUser(null);

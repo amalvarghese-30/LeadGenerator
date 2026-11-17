@@ -1,6 +1,7 @@
 import React from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './hooks/useAuth';
+import { ToastProvider } from './context/ToastContext';
 import { MainLayout } from './components/Layout/MainLayout';
 import { Login } from './pages/Auth/Login';
 import { Dashboard } from './pages/Dashboard';
@@ -39,8 +40,9 @@ const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) =
 export const App: React.FC = () => {
   return (
     <AuthProvider>
-      <BrowserRouter>
-        <Routes>
+      <ToastProvider>
+        <BrowserRouter>
+          <Routes>
           <Route path="/login" element={<Login />} />
           <Route path="/" element={<ProtectedRoute><MainLayout /></ProtectedRoute>}>
             <Route index element={<Navigate to="/dashboard" replace />} />
@@ -97,8 +99,9 @@ export const App: React.FC = () => {
           <Route path="*" element={<Navigate to="/dashboard" replace />} />
         </Routes>
       </BrowserRouter>
-    </AuthProvider>
-  );
+    </ToastProvider>
+  </AuthProvider>
+);
 };
 
 export default App;

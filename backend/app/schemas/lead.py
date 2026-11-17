@@ -27,9 +27,20 @@ class LeadUpdate(BaseModel):
 
 
 class LeadStatusUpdate(BaseModel):
-    crm_stage: str
+    crm_stage: Optional[str] = None
+    new_stage: Optional[str] = None
     reason: Optional[str] = None
+    note: Optional[str] = None
     notes: Optional[str] = None
+
+    def get_stage(self) -> str:
+        s = self.crm_stage or self.new_stage
+        if not s:
+            raise ValueError("Stage is required (crm_stage or new_stage)")
+        return s
+
+    def get_reason(self) -> Optional[str]:
+        return self.reason or self.note or self.notes
 
 
 class LeadQualifyRequest(BaseModel):

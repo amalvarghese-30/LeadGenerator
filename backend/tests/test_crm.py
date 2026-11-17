@@ -2,7 +2,7 @@ import pytest
 from app.crm.provider_service import create_provider, get_provider, list_providers, delete_provider
 from app.crm.company_service import create_company, get_company
 from app.crm.contact_service import create_contact, get_contact, suppress_contact
-from app.crm.lead_service import create_lead, get_lead, transition_stage, qualify_lead
+from app.crm.lead_service import create_lead, get_lead, transition_stage, qualify_lead, delete_lead
 from app.services.scoring_service import calculate_lead_score
 from app.services.export_service import _sanitize_val
 
@@ -89,6 +89,27 @@ async def test_lead_scoring_and_pipeline(test_db):
     assert score > 30
     assert "designation_relevance" in breakdown
     assert "business_presence" in breakdown
+
+@pytest.mark.asyncio
+async def test_lead_deletion_and_stage_contract(test_db):
+    lead = await create_lead(test_db, {
+        "contact_id": "c_mock_1",
+        "company_id": "co_mock_1",
+        "lead_source": "test",
+    })
+    lead_id = lead["id"]
+
+    # Verify stage transition
+    updated = await transition_stage(test_db, lead_id, "contacted", user_id="u_test", reason="First outreach email sent")
+    assert updated["crm_stage"] == "contacted"
+
+    # Verify deletion
+    deleted = await delete_lead(test_db, lead_id, user_id="u_test")
+    assert deleted is True
+
+    # Ensure it no longer exists
+    not_found = await get_lead(test_db, lead_id)
+    assert not_found is None
 
 def test_export_formula_injection_defense():
     assert _sanitize_val("=SUM(A1:A10)") == "'=SUM(A1:A10)"

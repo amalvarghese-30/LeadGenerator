@@ -23,9 +23,11 @@ import { Modal } from '../../components/ui/Modal';
 import { Pagination } from '../../components/ui/Pagination';
 import { LoadingSpinner } from '../../components/ui/LoadingSpinner';
 import { EmptyState } from '../../components/ui/EmptyState';
+import { useToast } from '../../context/ToastContext';
 import { formatDate } from '../../utils/format';
 
 export const Providers: React.FC = () => {
+  const { toast } = useToast();
   const [providers, setProviders] = useState<Provider[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -58,28 +60,10 @@ export const Providers: React.FC = () => {
       });
       setProviders(res.items);
       setTotal(res.total);
-    } catch {
-      // Demo fallback if fresh database
-      setProviders([
-        {
-          id: 'sample_theperson',
-          name: 'The Person',
-          website: 'https://theperson.in/',
-          domain: 'theperson.in',
-          category: 'direct_competitor',
-          similarity_score: 100,
-          location: 'Bangalore / Mumbai',
-          country: 'India',
-          services: ['Google Knowledge Panel', 'Personal Branding', 'Entity SEO', 'Authority PR'],
-          social_profiles: { linkedin: 'https://linkedin.com/company/thepersonin' },
-          discovery_status: 'researched',
-          verification_status: 'verified',
-          last_crawled_at: new Date().toISOString(),
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        },
-      ]);
-      setTotal(1);
+    } catch (err: any) {
+      setProviders([]);
+      setTotal(0);
+      toast.error(err.response?.data?.detail || 'Failed to load providers');
     } finally {
       setIsLoading(false);
     }
@@ -117,9 +101,10 @@ export const Providers: React.FC = () => {
         description: '',
         services: '',
       });
+      toast.success('Provider created successfully');
       fetchProviders();
     } catch (err: any) {
-      alert(err.response?.data?.detail || 'Failed to create provider');
+      toast.error(err.response?.data?.detail || 'Failed to create provider');
     } finally {
       setIsSubmitting(false);
     }
@@ -130,9 +115,9 @@ export const Providers: React.FC = () => {
     try {
       await startProviderResearch(id);
       fetchProviders();
-      alert('Research and crawl job dispatched to background processor.');
+      toast.success('Website research job dispatched to background crawler');
     } catch (err: any) {
-      alert(err.response?.data?.detail || 'Could not start research job');
+      toast.error(err.response?.data?.detail || 'Could not start research job');
     } finally {
       setResearchingId(null);
     }

@@ -16,7 +16,7 @@ import {
   ShieldAlert,
 } from 'lucide-react';
 import { LinkedinIcon, TwitterIcon, InstagramIcon } from '../../components/ui/SocialIcons';
-import { getLeads, updateLeadStage } from '../../services/leads';
+import { getLeads, updateLeadStage, deleteLead } from '../../services/leads';
 import { exportLeads } from '../../services/reports';
 import { Lead, CRMStage } from '../../types';
 import { Card } from '../../components/ui/Card';
@@ -28,6 +28,8 @@ import { StatusBadge } from '../../components/ui/StatusBadge';
 import { Pagination } from '../../components/ui/Pagination';
 import { LoadingSpinner } from '../../components/ui/LoadingSpinner';
 import { EmptyState } from '../../components/ui/EmptyState';
+import { ConfirmModal } from '../../components/ui/ConfirmModal';
+import { useToast } from '../../context/ToastContext';
 import { formatScore, formatDateTime } from '../../utils/format';
 
 const STAGES: CRMStage[] = [
@@ -46,6 +48,7 @@ const STAGES: CRMStage[] = [
 ];
 
 export const Leads: React.FC = () => {
+  const { toast } = useToast();
   const [leads, setLeads] = useState<Lead[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -53,93 +56,25 @@ export const Leads: React.FC = () => {
   const [priorityFilter, setPriorityFilter] = useState<string>('');
   const [viewMode, setViewMode] = useState<'table' | 'kanban'>('table');
   const [isLoading, setIsLoading] = useState(true);
+  const [leadToDelete, setLeadToDelete] = useState<string | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   const fetchLeads = async () => {
     setIsLoading(true);
     try {
+      const pageSize = viewMode === 'kanban' ? 100 : 20;
       const res = await getLeads({
-        page,
-        page_size: 20,
+        page: viewMode === 'kanban' ? 1 : page,
+        page_size: pageSize,
         crm_stage: stageFilter || undefined,
         lead_priority: priorityFilter || undefined,
       });
       setLeads(res.items);
       setTotal(res.total);
-    } catch {
-      // Demo fallback leads
-      setLeads([
-        {
-          id: 'lead_1',
-          contact_id: 'c_1',
-          contact: {
-            id: 'c_1',
-            full_name: 'Dr. Siddharth Malhotra',
-            designation: 'Managing Director & Founder',
-            company_name: 'Malhotra Healthcare AI',
-            professional_urls: { linkedin: 'https://linkedin.com/in/siddharth-demo' },
-            business_contacts: { email: 'enquiry@malhotrahealth.com' },
-            contact_verification_status: 'human_approved',
-            is_suppressed: false,
-            do_not_contact: false,
-            created_at: new Date().toISOString(),
-          },
-          company_id: 'co_1',
-          company: {
-            id: 'co_1',
-            name: 'Malhotra Healthcare AI',
-            domain: 'malhotrahealth.com',
-            industry: 'Healthcare Technology',
-            country: 'India',
-            public_contact: { email: 'contact@malhotrahealth.com' },
-            verification_status: 'verified',
-            created_at: new Date().toISOString(),
-          },
-          lead_score: 92,
-          lead_priority: 'high',
-          crm_stage: 'verified',
-          qualification_status: 'qualified',
-          outreach_eligible: true,
-          score_breakdown: { customer_category: 20, designation: 20, evidence: 20, business_presence: 15, contact_route: 10, freshness: 7 },
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        },
-        {
-          id: 'lead_2',
-          contact_id: 'c_2',
-          contact: {
-            id: 'c_2',
-            full_name: 'Ananya Roy',
-            designation: 'Chief Technology Officer',
-            company_name: 'PayFin Cloud Solutions',
-            professional_urls: { linkedin: 'https://linkedin.com/in/ananya-roy' },
-            business_contacts: { email: 'info@payfincloud.com' },
-            contact_verification_status: 'verified',
-            is_suppressed: false,
-            do_not_contact: false,
-            created_at: new Date().toISOString(),
-          },
-          company_id: 'co_2',
-          company: {
-            id: 'co_2',
-            name: 'PayFin Cloud Solutions',
-            domain: 'payfincloud.com',
-            industry: 'FinTech',
-            country: 'India',
-            public_contact: {},
-            verification_status: 'verified',
-            created_at: new Date().toISOString(),
-          },
-          lead_score: 85,
-          lead_priority: 'high',
-          crm_stage: 'qualified',
-          qualification_status: 'qualified',
-          outreach_eligible: true,
-          score_breakdown: { customer_category: 20, designation: 18, evidence: 20, business_presence: 15, contact_route: 5, freshness: 7 },
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        },
-      ]);
-      setTotal(2);
+    } catch (err: any) {
+      setLeads([]);
+      setTotal(0);
+      toast.error(err.response?.data?.detail || 'Failed to load leads from CRM');
     } finally {
       setIsLoading(false);
     }
@@ -147,14 +82,30 @@ export const Leads: React.FC = () => {
 
   useEffect(() => {
     fetchLeads();
-  }, [page, stageFilter, priorityFilter]);
+  }, [page, stageFilter, priorityFilter, viewMode]);
 
   const handleStageChange = async (leadId: string, newStage: CRMStage) => {
     try {
       await updateLeadStage(leadId, newStage);
+      toast.success(`Lead moved to ${newStage.replace(/_/g, ' ')}`);
       fetchLeads();
     } catch (err: any) {
-      alert(err.response?.data?.detail || 'Failed to update stage');
+      toast.error(err.response?.data?.detail || 'Failed to update lead stage');
+    }
+  };
+
+  const handleDeleteLead = async () => {
+    if (!leadToDelete) return;
+    setIsDeleting(true);
+    try {
+      await deleteLead(leadToDelete);
+      toast.success('Lead deleted successfully');
+      setLeadToDelete(null);
+      fetchLeads();
+    } catch (err: any) {
+      toast.error(err.response?.data?.detail || 'Failed to delete lead');
+    } finally {
+      setIsDeleting(false);
     }
   };
 
@@ -393,38 +344,61 @@ export const Leads: React.FC = () => {
           />
         </div>
       ) : (
-        /* Kanban View */
-        <div className="flex gap-4 overflow-x-auto pb-4">
-          {STAGES.slice(0, 6).map((stage) => {
+        /* Kanban View - All 12 Canonical CRM Stages */
+        <div className="flex gap-4 overflow-x-auto pb-6 pt-1">
+          {STAGES.map((stage) => {
             const stageLeads = leads.filter((l) => l.crm_stage === stage);
             return (
-              <div key={stage} className="w-72 shrink-0 bg-slate-100/70 rounded-xl p-3 border border-slate-200/80">
-                <div className="flex items-center justify-between mb-3 px-1">
-                  <span className="text-xs font-bold text-slate-700 capitalize">
-                    {stage.replace(/_/g, ' ')}
-                  </span>
-                  <span className="text-xs bg-slate-200 text-slate-600 px-2 py-0.5 rounded-full font-semibold">
+              <div key={stage} className="w-80 shrink-0 bg-slate-50/80 rounded-2xl p-3.5 border border-slate-200/80 flex flex-col max-h-[calc(100vh-280px)]">
+                <div className="flex items-center justify-between mb-3 px-1.5 pb-2.5 border-b border-slate-200/60">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-bold text-slate-800 capitalize">
+                      {stage.replace(/_/g, ' ')}
+                    </span>
+                  </div>
+                  <span className="text-[11px] bg-white text-slate-700 px-2.5 py-0.5 rounded-full font-bold border border-slate-200 shadow-2xs">
                     {stageLeads.length}
                   </span>
                 </div>
-                <div className="space-y-2.5">
+                <div className="space-y-3 overflow-y-auto pr-1 flex-1">
                   {stageLeads.map((l) => (
-                    <Card key={l.id} className="p-3 bg-white shadow-xs hover:shadow-md transition-shadow">
-                      <Link to={`/leads/${l.id}`} className="font-semibold text-xs text-slate-900 hover:text-blue-600 block">
-                        {l.contact?.full_name || 'Prospect'}
-                      </Link>
-                      <div className="text-[11px] text-slate-500 truncate mt-0.5">
-                        {l.contact?.designation} • {l.company?.name}
+                    <Card key={l.id} className="p-3.5 bg-white shadow-xs hover:shadow-md transition-all border border-slate-200/80 group">
+                      <div className="flex items-start justify-between gap-2">
+                        <Link to={`/leads/${l.id}`} className="font-bold text-xs text-slate-900 hover:text-blue-600 block line-clamp-1">
+                          {l.contact?.full_name || 'Prospect'}
+                        </Link>
+                        <span className="text-[10px] font-bold text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded">
+                          {l.lead_score}
+                        </span>
                       </div>
-                      <div className="flex items-center justify-between mt-2.5 pt-2 border-t border-slate-100">
-                        <span className="text-[10px] font-bold text-blue-600">Score: {l.lead_score}</span>
-                        <StatusBadge stage={l.crm_stage} />
+                      <div className="text-[11px] text-slate-500 truncate mt-1">
+                        {l.contact?.designation ? `${l.contact.designation} • ` : ''}{l.company?.name || 'Company'}
+                      </div>
+                      <div className="mt-3 pt-2.5 border-t border-slate-100 flex items-center justify-between gap-2">
+                        <select
+                          value={l.crm_stage}
+                          onChange={(e) => handleStageChange(l.id, e.target.value as CRMStage)}
+                          className="text-[10px] font-medium bg-slate-50 border border-slate-200 rounded-lg px-2 py-1 text-slate-700 focus:outline-hidden focus:ring-1 focus:ring-blue-500"
+                          title="Move stage"
+                        >
+                          {STAGES.map((s) => (
+                            <option key={s} value={s}>
+                              Move: {s.replace(/_/g, ' ')}
+                            </option>
+                          ))}
+                        </select>
+                        <button
+                          onClick={() => setLeadToDelete(l.id)}
+                          className="opacity-0 group-hover:opacity-100 text-[10px] text-rose-500 hover:text-rose-700 hover:underline transition-opacity"
+                        >
+                          Delete
+                        </button>
                       </div>
                     </Card>
                   ))}
                   {stageLeads.length === 0 && (
-                    <div className="text-center py-6 text-slate-400 text-[11px] border border-dashed border-slate-200 rounded-lg">
-                      No leads
+                    <div className="text-center py-8 text-slate-400 text-xs border border-dashed border-slate-200 rounded-xl bg-white/50">
+                      No leads in {stage.replace(/_/g, ' ')}
                     </div>
                   )}
                 </div>
@@ -433,6 +407,18 @@ export const Leads: React.FC = () => {
           })}
         </div>
       )}
+
+      {/* Confirmation Modal for Lead Deletion */}
+      <ConfirmModal
+        isOpen={!!leadToDelete}
+        title="Delete CRM Lead"
+        message="Are you sure you want to delete this lead? This action will remove the lead record and log an audit event. Discovered contacts and companies will not be deleted."
+        confirmText="Delete Lead"
+        confirmVariant="danger"
+        isLoading={isDeleting}
+        onConfirm={handleDeleteLead}
+        onCancel={() => setLeadToDelete(null)}
+      />
     </div>
   );
 };

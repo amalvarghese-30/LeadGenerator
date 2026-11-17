@@ -106,6 +106,29 @@ async def create_indexes(db: AsyncIOMotorDatabase) -> None:
         IndexModel([("is_throttled", ASCENDING)], name="rate_limits_throttled"),
     ])
 
+    await db.rate_limit_request_logs.create_indexes([
+        IndexModel([("domain", ASCENDING)], name="rl_request_logs_domain"),
+        IndexModel([("timestamp", DESCENDING)], name="rl_request_logs_timestamp"),
+        IndexModel([("classification", ASCENDING)], name="rl_request_logs_classification"),
+        IndexModel([("status_code", ASCENDING)], name="rl_request_logs_status"),
+    ])
+
+    await db.domain_rate_profiles.create_indexes([
+        IndexModel([("domain", ASCENDING)], unique=True, name="domain_profiles_domain_unique"),
+        IndexModel([("status", ASCENDING)], name="domain_profiles_status"),
+        IndexModel([("updated_at", DESCENDING)], name="domain_profiles_updated_at"),
+    ])
+
+    await db.rate_limit_events.create_indexes([
+        IndexModel([("domain", ASCENDING)], name="rate_limit_events_domain"),
+        IndexModel([("timestamp", DESCENDING)], name="rate_limit_events_timestamp"),
+        IndexModel([("event_type", ASCENDING)], name="rate_limit_events_type"),
+    ])
+
+    await db.api_rate_limit_profiles.create_indexes([
+        IndexModel([("provider", ASCENDING)], unique=True, name="api_profiles_provider_unique"),
+    ])
+
     await db.search_history.create_indexes([
         IndexModel([("search_type", ASCENDING)], name="search_history_type"),
         IndexModel([("created_at", DESCENDING)], name="search_history_created_at"),

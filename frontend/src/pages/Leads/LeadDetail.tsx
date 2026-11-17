@@ -29,10 +29,12 @@ import { Select } from '../../components/ui/Select';
 import { Modal } from '../../components/ui/Modal';
 import { Input } from '../../components/ui/Input';
 import { LoadingSpinner } from '../../components/ui/LoadingSpinner';
+import { useToast } from '../../context/ToastContext';
 import { formatDate, formatDateTime, formatScore } from '../../utils/format';
 
 export const LeadDetail: React.FC = () => {
   const { id } = useParams<{ id: string }>();
+  const { toast } = useToast();
   const [lead, setLead] = useState<Lead | null>(null);
   const [activities, setActivities] = useState<Activity[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -67,9 +69,10 @@ export const LeadDetail: React.FC = () => {
     try {
       const updated = await updateLeadStage(id, newStage);
       setLead(updated);
+      toast.success(`CRM stage updated to ${newStage.replace(/_/g, ' ')}`);
       fetchLeadData();
     } catch (err: any) {
-      alert(err.response?.data?.detail || 'Failed to update CRM stage');
+      toast.error(err.response?.data?.detail || 'Failed to update CRM stage');
     }
   };
 
@@ -78,9 +81,10 @@ export const LeadDetail: React.FC = () => {
     try {
       const updated = await qualifyLead(id, status, reason);
       setLead(updated);
+      toast.success(`Lead marked as ${status}`);
       fetchLeadData();
     } catch (err: any) {
-      alert(err.response?.data?.detail || 'Failed to update qualification');
+      toast.error(err.response?.data?.detail || 'Failed to update qualification');
     }
   };
 
@@ -97,9 +101,10 @@ export const LeadDetail: React.FC = () => {
       setIsActivityModalOpen(false);
       setActivityTitle('');
       setActivityDesc('');
+      toast.success('Activity logged to timeline');
       fetchLeadData();
     } catch (err: any) {
-      alert(err.response?.data?.detail || 'Failed to log activity');
+      toast.error(err.response?.data?.detail || 'Failed to log activity');
     }
   };
 

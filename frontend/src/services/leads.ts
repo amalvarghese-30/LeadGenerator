@@ -31,7 +31,12 @@ export const updateLead = async (id: string, data: Partial<Lead>): Promise<Lead>
 };
 
 export const updateLeadStage = async (id: string, newStage: CRMStage, note?: string): Promise<Lead> => {
-  const res = await api.post<Lead>(`/leads/${id}/stage`, { new_stage: newStage, note });
+  const res = await api.post<Lead>(`/leads/${id}/status`, {
+    crm_stage: newStage,
+    new_stage: newStage,
+    reason: note,
+    note,
+  });
   return res.data;
 };
 

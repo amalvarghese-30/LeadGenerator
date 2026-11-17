@@ -19,9 +19,11 @@ import { Input } from '../../components/ui/Input';
 import { Select } from '../../components/ui/Select';
 import { LoadingSpinner } from '../../components/ui/LoadingSpinner';
 import { EmptyState } from '../../components/ui/EmptyState';
+import { useToast } from '../../context/ToastContext';
 import { formatDateTime } from '../../utils/format';
 
 export const Tasks: React.FC = () => {
+  const { toast } = useToast();
   const [tasks, setTasks] = useState<Task[]>([]);
   const [activeTab, setActiveTab] = useState<'upcoming' | 'overdue' | 'completed'>('upcoming');
   const [isLoading, setIsLoading] = useState(true);
@@ -45,30 +47,9 @@ export const Tasks: React.FC = () => {
         status: activeTab === 'completed' ? 'completed' : 'pending',
       });
       setTasks(res.items);
-    } catch {
-      // Demo fallback
-      setTasks([
-        {
-          id: 't_1',
-          title: 'Review executive Knowledge Panel case study for Dr. Malhotra',
-          description: 'Confirm published article references and verify personal site.',
-          task_type: 'verification',
-          priority: 'high',
-          status: 'pending',
-          due_date: new Date(Date.now() + 86400000).toISOString(),
-          created_at: new Date().toISOString(),
-        },
-        {
-          id: 't_2',
-          title: 'Schedule outreach review for PayFin CTO Ananya Roy',
-          description: 'Prepare tailored introduction highlighting authority visibility.',
-          task_type: 'follow_up',
-          priority: 'medium',
-          status: 'pending',
-          due_date: new Date(Date.now() + 86400000 * 3).toISOString(),
-          created_at: new Date().toISOString(),
-        },
-      ]);
+    } catch (err: any) {
+      setTasks([]);
+      toast.error(err.response?.data?.detail || 'Failed to load tasks');
     } finally {
       setIsLoading(false);
     }
@@ -90,25 +71,30 @@ export const Tasks: React.FC = () => {
         priority: 'medium',
         due_date: new Date(Date.now() + 86400000 * 2).toISOString().slice(0, 16),
       });
+      toast.success('Task created successfully');
       fetchTasks();
     } catch (err: any) {
-      alert(err.response?.data?.detail || 'Failed to create task');
+      toast.error(err.response?.data?.detail || 'Failed to create task');
     }
   };
 
   const handleMarkComplete = async (id: string) => {
     try {
       await updateTask(id, { status: 'completed' });
+      toast.success('Task marked as completed');
       fetchTasks();
     } catch (err: any) {
-      alert(err.response?.data?.detail || 'Failed to update task');
+      toast.error(err.response?.data?.detail || 'Failed to update task');
     }
   };
 
   const handleDelete = async (id: string) => {
-    if (confirm('Delete this task?')) {
+    try {
       await deleteTask(id);
+      toast.success('Task removed');
       fetchTasks();
+    } catch (err: any) {
+      toast.error(err.response?.data?.detail || 'Failed to delete task');
     }
   };
 

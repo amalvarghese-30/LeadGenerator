@@ -319,16 +319,29 @@ export interface RateLimitMetric {
 }
 
 export interface DomainRateLimit {
+  id?: string;
   domain: string;
-  requests: number;
-  success: number;
-  throttled_429: number;
-  forbidden_403: number;
-  errors: number;
-  error_rate_pct: number;
-  avg_response_time_ms: number;
-  configured_delay_seconds: number;
-  concurrency: number;
+  total_requests?: number;
+  requests?: number;
+  successful_requests?: number;
+  success?: number;
+  blocked_requests?: number;
+  throttled_429?: number;
+  forbidden_403?: number;
+  errors?: number;
+  error_rate_pct?: number;
+  blocking_percentage?: number;
+  average_response_time?: number;
+  avg_response_time_ms?: number;
+  active_interval_ms?: number;
+  estimated_interval_ms?: number;
+  configured_delay_seconds?: number;
+  active_concurrency?: number;
+  concurrency?: number;
+  confidence?: string;
+  status?: string;
+  is_paused?: boolean;
+  cooldown_until?: string;
   last_throttled_at?: string;
   last_retry_after?: number;
 }
@@ -340,9 +353,11 @@ export interface RateLimitSummary {
   forbidden_403_count: number;
   other_error_count: number;
   error_percentage: number;
+  blocking_percentage?: number;
   average_response_time_ms: number;
   active_monitored_domains: number;
-  recent_events: RateLimitMetric[];
+  paused_domains?: number;
+  recent_events: any[];
 }
 
 export interface SearchResultCandidate {

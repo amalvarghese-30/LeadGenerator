@@ -30,37 +30,42 @@ interface SidebarProps {
 export const Sidebar: React.FC<SidebarProps> = ({ collapsed, onToggle }) => {
   const navSections = [
     {
-      title: 'Overview',
+      title: 'OVERVIEW',
       items: [
         { label: 'Dashboard', to: '/dashboard', icon: LayoutDashboard },
       ],
     },
     {
-      title: 'Intelligence & Discovery',
+      title: 'FIND PROSPECTS',
       items: [
         { label: 'Lead Generator', to: '/lead-generator', icon: Sparkles },
         { label: 'People Finder', to: '/people-finder', icon: UserSearch },
         { label: 'Company Finder', to: '/company-finder', icon: Building },
         { label: 'Auto Profile Creator', to: '/auto-profile-creator', icon: UserCheck },
-        { label: 'Website Intelligence', to: '/website-intelligence', icon: Globe },
-        { label: 'Competitor Intelligence', to: '/competitor-intelligence', icon: Radar },
-        { label: 'Rate Limit Checker', to: '/rate-limit-checker', icon: Gauge },
       ],
     },
     {
-      title: 'CRM Platform',
+      title: 'RESEARCH & INTELLIGENCE',
       items: [
-        { label: 'Leads CRM', to: '/leads', icon: Users },
-        { label: 'Companies CRM', to: '/companies', icon: Briefcase },
-        { label: 'Contacts CRM', to: '/contacts', icon: UserCheck },
+        { label: 'Website Intelligence', to: '/website-intelligence', icon: Globe },
+        { label: 'Competitor Intelligence', to: '/competitor-intelligence', icon: Radar },
+        { label: 'Rate Limit Checker', to: '/rate-limit-checker', icon: Gauge },
         { label: 'Providers', to: '/providers', icon: Building2 },
       ],
     },
     {
-      title: 'Operations',
+      title: 'CRM WORKSPACE',
+      items: [
+        { label: 'Leads', to: '/leads', icon: Users },
+        { label: 'Companies', to: '/companies', icon: Briefcase },
+        { label: 'Contacts', to: '/contacts', icon: UserCheck },
+        { label: 'Tasks & Activities', to: '/tasks', icon: CheckSquare },
+      ],
+    },
+    {
+      title: 'REPORTS & SETTINGS',
       items: [
         { label: 'Reports', to: '/reports', icon: BarChart3 },
-        { label: 'Tasks & Activities', to: '/tasks', icon: CheckSquare },
         { label: 'Settings', to: '/settings', icon: Settings },
       ],
     },
