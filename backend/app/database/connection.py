@@ -30,8 +30,26 @@ async def connect_to_mongodb() -> None:
     try:
         await _async_client.admin.command("ping")
         logger.info("MongoDB connection established.")
+        await init_db_indexes(_async_client[settings.MONGODB_DB_NAME])
     except Exception as e:
-        logger.warning(f"MongoDB ping failed (will retry on first query): {e}")
+        logger.warning(f"MongoDB ping or index init failed (will retry on first query): {e}")
+
+
+async def init_db_indexes(db: AsyncIOMotorDatabase) -> None:
+    """Safely and idempotently create required database indexes."""
+    try:
+        await db.companies.create_index("domain", background=True)
+        await db.companies.create_index("normalized_name", background=True)
+        await db.companies.create_index("enrichment_status", background=True)
+        await db.companies.create_index("dedup_key", background=True)
+        await db.provider_client_references.create_index([("provider_id", 1), ("company_id", 1)], background=True)
+        await db.provider_client_references.create_index("source_url", background=True)
+        await db.crawl_jobs.create_index("provider_id", background=True)
+        await db.crawl_jobs.create_index("status", background=True)
+        await db.job_events.create_index([("job_id", 1), ("_id", 1)], background=True)
+        logger.info("MongoDB indexes verified/created.")
+    except Exception as e:
+        logger.debug("Non-fatal index creation warning: %s", e)
 
 
 async def close_mongodb_connection() -> None:

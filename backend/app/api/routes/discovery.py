@@ -315,11 +315,14 @@ async def get_job_results(
     results = []
     for ref in references:
         ref_id = str(ref["_id"])
-        comp_name = ref.get("company_name")
+        comp_name = ref.get("company_name") or ref.get("client_name")
         person_name = ref.get("person_name")
+        company_id = ref.get("company_id")
 
         company = None
-        if comp_name:
+        if company_id and ObjectId.is_valid(company_id):
+            company = await db.companies.find_one({"_id": ObjectId(company_id)})
+        if not company and comp_name:
             company = await db.companies.find_one({"name": {"$regex": f"^{re.escape(comp_name)}$", "$options": "i"}})
 
         contact = None
@@ -328,23 +331,54 @@ async def get_job_results(
         if not contact and person_name:
             contact = await db.contacts.find_one({"full_name": {"$regex": f"^{re.escape(person_name)}$", "$options": "i"}})
 
+        comp_pub_contact = company.get("public_contact") or {} if company else {}
+        comp_channels = company.get("public_contact_channels") or [] if company else []
+        comp_socials = company.get("social_profiles") or [] if company else []
+
+        # Find best email and phone across contact and company
+        best_email = (
+            contact.get("email")
+            if contact and contact.get("email")
+            else (comp_pub_contact.get("email") or next((c["value"] for c in comp_channels if c.get("type") == "email"), None))
+        )
+        best_phone = (
+            contact.get("phone")
+            if contact and contact.get("phone")
+            else (comp_pub_contact.get("phone") or next((c["value"] for c in comp_channels if c.get("type") == "phone"), None))
+        )
+        best_linkedin = (
+            contact.get("linkedin_url")
+            if contact and contact.get("linkedin_url")
+            else (company.get("linkedin_url") if company else None)
+        )
+
+        all_channels = list(comp_channels)
+        if contact and contact.get("contact_channels"):
+            existing_c_vals = {c.get("value") for c in all_channels if isinstance(c, dict)}
+            for cc in contact["contact_channels"]:
+                if isinstance(cc, dict) and cc.get("value") not in existing_c_vals:
+                    all_channels.append(cc)
+
         results.append({
             "id": ref_id,
+            "company_id": str(company["_id"]) if company else company_id,
             "company_name": comp_name or (company.get("name") if company else None),
-            "company_website": company.get("website") if company else None,
+            "company_website": (company.get("website") if company else None) or ref.get("company_website") or ref.get("client_website"),
             "industry": ref.get("industry") or (company.get("industry") if company else None),
             "person_name": person_name or (contact.get("full_name") if contact else None),
             "designation": ref.get("designation") or (contact.get("designation") if contact else None),
-            "relationship_type": ref.get("relationship_type", "confirmed_client_case_study"),
-            "confidence": float(ref.get("confidence", 0.7)),
-            "evidence_quote": ref.get("evidence_quote"),
-            "source_url": ref.get("source_url"),
-            "verification_status": ref.get("verification_status", "pending"),
+            "relationship_type": ref.get("relationship_type") or ref.get("reference_type", "client_portfolio_reference"),
+            "confidence": float(ref.get("confidence") or ref.get("confidence_score") or 0.8),
+            "evidence_quote": ref.get("evidence_quote") or ref.get("evidence_snippet"),
+            "source_url": ref.get("source_url") or ref.get("evidence_url"),
+            "verification_status": ref.get("verification_status", "pending_review"),
+            "enrichment_status": company.get("enrichment_status", "pending") if company else "pending",
             "contacts": {
-                "email": contact.get("email") if contact else None,
-                "phone": contact.get("phone") if contact else None,
-                "linkedin": contact.get("linkedin_url") or (contact.get("professional_urls", {}).get("linkedin") if contact else None),
-                "channels": contact.get("contact_channels", []) if contact else [],
+                "email": best_email,
+                "phone": best_phone,
+                "linkedin": best_linkedin,
+                "channels": all_channels,
+                "social_profiles": comp_socials,
             }
         })
 
@@ -354,6 +388,33 @@ async def get_job_results(
         "total_results": len(results),
         "results": results
     }
+
+
+@router.get("/jobs/{job_id}/companies")
+async def get_job_companies(
+    job_id: str,
+    db: AsyncIOMotorDatabase = Depends(get_db),
+    _user: dict = Depends(get_current_user),
+):
+    if not ObjectId.is_valid(job_id):
+        raise HTTPException(400, "Invalid job ID")
+    job = await db.crawl_jobs.find_one({"_id": ObjectId(job_id)})
+    if not job:
+        raise HTTPException(404, "Job not found")
+
+    provider_id = job.get("provider_id")
+    refs = await db.provider_client_references.find({"provider_id": provider_id}).to_list(100)
+    comp_ids = [ObjectId(r["company_id"]) for r in refs if r.get("company_id") and ObjectId.is_valid(r["company_id"])]
+    companies = []
+    if comp_ids:
+        docs = await db.companies.find({"_id": {"$in": comp_ids}}).to_list(100)
+        for d in docs:
+            d["id"] = str(d.pop("_id"))
+            for dt in ("created_at", "updated_at", "last_enriched_at"):
+                if d.get(dt) and hasattr(d[dt], "isoformat"):
+                    d[dt] = d[dt].isoformat()
+            companies.append(d)
+    return {"job_id": job_id, "total": len(companies), "companies": companies}
 
 
 @router.post("/jobs/{job_id}/cancel")

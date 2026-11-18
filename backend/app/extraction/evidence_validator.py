@@ -15,20 +15,30 @@ from app.extraction.name_validator import NameValidator
 
 # Supported explicit relationship classifications
 VALID_RELATIONSHIP_TYPES = {
+    "confirmed_client",
     "confirmed_client_case_study",
+    "case_study_client",
     "client_testimonial",
+    "testimonial_client",
     "client_portfolio_reference",
     "published_customer_profile",
     "featured_personality",
     "collaborator",
+    "partner",
+    "supplier",
+    "sponsor",
+    "affiliate",
     "ordinary_mention",
     "unclear_relationship",
 }
 
 # Client relationship types that represent actual customer relationships
 CLIENT_CUSTOMER_RELATIONSHIPS = {
+    "confirmed_client",
     "confirmed_client_case_study",
+    "case_study_client",
     "client_testimonial",
+    "testimonial_client",
     "client_portfolio_reference",
     "published_customer_profile",
 }
@@ -77,13 +87,13 @@ class EvidenceValidator:
         # 2. Must identify at least a valid person name or company name
         person_name = extraction_result.get("person_name")
         company_name = extraction_result.get("company_name")
+        quote = extraction_result.get("evidence_quote") or ""
 
         if not person_name and not company_name:
             rejection_reasons.append("No person name or company name provided")
 
         # 3. If person name is provided, must pass strict NameValidator
         if person_name:
-            quote = extraction_result.get("evidence_quote", "")
             is_valid_name, name_issues = self.name_validator.validate_person_name(
                 person_name, context=quote
             )
@@ -115,11 +125,12 @@ class EvidenceValidator:
                     rejection_reasons.append(f"Entity matches competitor domain name '{competitor_domain}'")
 
         # 5. Evidence quotation correspondence
-        quote = (extraction_result.get("evidence_quote") or "").strip()
+        ext_method = extraction_result.get("extraction_method")
+        min_quote_len = 5 if ext_method in ("portfolio_dom", "portfolio_logo_dom") else 15
         if not quote:
             rejection_reasons.append("Missing evidence quotation")
-        elif len(quote) < 15:
-            rejection_reasons.append("Evidence quotation is too short (< 15 characters)")
+        elif len(quote) < min_quote_len:
+            rejection_reasons.append(f"Evidence quotation is too short (< {min_quote_len} characters)")
         else:
             quote_lower = quote.lower()
             text_lower = (source_text or "").lower()

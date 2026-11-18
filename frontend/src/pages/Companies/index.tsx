@@ -4,6 +4,8 @@ import {
   Search,
   Globe,
   Download,
+  Eye,
+  Users,
 } from 'lucide-react';
 import { getCompanies } from '../../services/companies';
 import { exportCompanies } from '../../services/reports';
@@ -16,6 +18,7 @@ import { Pagination } from '../../components/ui/Pagination';
 import { LoadingSpinner } from '../../components/ui/LoadingSpinner';
 import { EmptyState } from '../../components/ui/EmptyState';
 import { formatDate } from '../../utils/format';
+import { CompanyDetailModal } from './CompanyDetailModal';
 
 export const Companies: React.FC = () => {
   const [companies, setCompanies] = useState<Company[]>([]);
@@ -23,6 +26,7 @@ export const Companies: React.FC = () => {
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState('');
   const [isLoading, setIsLoading] = useState(true);
+  const [selectedCompany, setSelectedCompany] = useState<Company | null>(null);
 
   const fetchCompanies = async () => {
     setIsLoading(true);
@@ -117,44 +121,74 @@ export const Companies: React.FC = () => {
                   <th className="py-3 px-4">Industry</th>
                   <th className="py-3 px-4">Location</th>
                   <th className="py-3 px-4">Website</th>
+                  <th className="py-3 px-4">Identified Leadership</th>
                   <th className="py-3 px-4">Status</th>
-                  <th className="py-3 px-4 text-right">Created</th>
+                  <th className="py-3 px-4 text-right">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {companies.map((co) => (
-                  <tr key={co.id} className="hover:bg-slate-50/60 transition-colors">
-                    <td className="py-3.5 px-4 font-semibold text-slate-900">
-                      {co.name}
-                    </td>
-                    <td className="py-3.5 px-4 text-slate-600">
-                      {co.industry || 'Professional Services'}
-                    </td>
-                    <td className="py-3.5 px-4 text-slate-500">
-                      {co.city || co.country ? `${co.city || ''} ${co.country || ''}` : '—'}
-                    </td>
-                    <td className="py-3.5 px-4">
-                      {co.website ? (
-                        <a
-                          href={co.website}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="text-blue-600 hover:underline flex items-center gap-1 font-mono text-[11px]"
+                {companies.map((co) => {
+                  const peopleCount = co.associated_people?.length || 0;
+                  return (
+                    <tr
+                      key={co.id}
+                      onClick={() => setSelectedCompany(co)}
+                      className="hover:bg-slate-50/80 transition-colors cursor-pointer"
+                    >
+                      <td className="py-3.5 px-4 font-semibold text-slate-900">
+                        <div className="flex items-center gap-2">
+                          <span className="hover:text-indigo-600 transition-colors">{co.name}</span>
+                          {co.enrichment_status === 'enriched' && (
+                            <span className="inline-block w-2 h-2 rounded-full bg-emerald-500" title="Enriched" />
+                          )}
+                        </div>
+                      </td>
+                      <td className="py-3.5 px-4 text-slate-600">
+                        {co.industry || 'Professional Services'}
+                      </td>
+                      <td className="py-3.5 px-4 text-slate-500">
+                        {co.city || co.country ? `${co.city || ''} ${co.country || ''}` : '—'}
+                      </td>
+                      <td className="py-3.5 px-4" onClick={(e) => e.stopPropagation()}>
+                        {co.website ? (
+                          <a
+                            href={co.website}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="text-blue-600 hover:underline flex items-center gap-1 font-mono text-[11px]"
+                          >
+                            <Globe className="w-3 h-3 text-slate-400" /> {co.domain || co.website}
+                          </a>
+                        ) : (
+                          '—'
+                        )}
+                      </td>
+                      <td className="py-3.5 px-4">
+                        {peopleCount > 0 ? (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 font-medium text-[11px]">
+                            <Users className="w-3 h-3" /> {peopleCount} leader{peopleCount > 1 ? 's' : ''}
+                          </span>
+                        ) : (
+                          <span className="text-slate-400 text-[11px]">Direct Channels</span>
+                        )}
+                      </td>
+                      <td className="py-3.5 px-4">
+                        <Badge variant="success">Verified</Badge>
+                      </td>
+                      <td className="py-3.5 px-4 text-right" onClick={(e) => e.stopPropagation()}>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => setSelectedCompany(co)}
+                          leftIcon={<Eye className="w-3.5 h-3.5 text-indigo-600" />}
+                          className="text-indigo-600 hover:bg-indigo-50"
                         >
-                          <Globe className="w-3 h-3 text-slate-400" /> {co.domain || co.website}
-                        </a>
-                      ) : (
-                        '—'
-                      )}
-                    </td>
-                    <td className="py-3.5 px-4">
-                      <Badge variant="success">Verified</Badge>
-                    </td>
-                    <td className="py-3.5 px-4 text-slate-500 text-right">
-                      {formatDate(co.created_at)}
-                    </td>
-                  </tr>
-                ))}
+                          Dossier
+                        </Button>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -166,6 +200,14 @@ export const Companies: React.FC = () => {
             onPageChange={setPage}
           />
         </div>
+      )}
+
+      {selectedCompany && (
+        <CompanyDetailModal
+          isOpen={!!selectedCompany}
+          onClose={() => setSelectedCompany(null)}
+          company={selectedCompany}
+        />
       )}
     </div>
   );

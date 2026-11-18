@@ -63,6 +63,14 @@ export const Scanner: React.FC = () => {
   const [results, setResults] = useState<ScanResultItem[]>([]);
   const [isResultsLoading, setIsResultsLoading] = useState(false);
   const [tableFilter, setTableFilter] = useState('');
+  const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [expandedRowId, setExpandedRowId] = useState<string | null>(null);
+
+  const handleCopyChannel = (key: string, text: string) => {
+    navigator.clipboard.writeText(text);
+    setCopiedId(key);
+    setTimeout(() => setCopiedId(null), 2000);
+  };
 
   // UI state: Collapsible panels
   const [isTerminalExpanded, setIsTerminalExpanded] = useState(true);
@@ -523,25 +531,33 @@ export const Scanner: React.FC = () => {
       'Email',
       'Phone',
       'LinkedIn',
+      'Contact Forms',
+      'All Channels',
       'Confidence',
       'Relationship Type',
       'Source URL',
       'Evidence Quote',
     ];
-    const rows = filteredResults.map((r) => [
-      `"${(r.company_name || '').replace(/"/g, '""')}"`,
-      `"${(r.company_website || '').replace(/"/g, '""')}"`,
-      `"${(r.industry || '').replace(/"/g, '""')}"`,
-      `"${(r.person_name || '').replace(/"/g, '""')}"`,
-      `"${(r.designation || '').replace(/"/g, '""')}"`,
-      `"${(r.contacts?.email || '').replace(/"/g, '""')}"`,
-      `"${(r.contacts?.phone || '').replace(/"/g, '""')}"`,
-      `"${(r.contacts?.linkedin || '').replace(/"/g, '""')}"`,
-      r.confidence,
-      `"${r.relationship_type}"`,
-      `"${(r.source_url || '').replace(/"/g, '""')}"`,
-      `"${(r.evidence_quote || '').replace(/"/g, '""')}"`,
-    ]);
+    const rows = filteredResults.map((r) => {
+      const forms = (r.contacts?.channels || []).filter((c: any) => c.type === 'contact_form').map((c: any) => c.value).join('; ');
+      const allCh = (r.contacts?.channels || []).map((c: any) => `${c.type}: ${c.value}`).join('; ');
+      return [
+        `"${(r.company_name || '').replace(/"/g, '""')}"`,
+        `"${(r.company_website || '').replace(/"/g, '""')}"`,
+        `"${(r.industry || '').replace(/"/g, '""')}"`,
+        `"${(r.person_name || '').replace(/"/g, '""')}"`,
+        `"${(r.designation || '').replace(/"/g, '""')}"`,
+        `"${(r.contacts?.email || '').replace(/"/g, '""')}"`,
+        `"${(r.contacts?.phone || '').replace(/"/g, '""')}"`,
+        `"${(r.contacts?.linkedin || '').replace(/"/g, '""')}"`,
+        `"${(forms || '').replace(/"/g, '""')}"`,
+        `"${(allCh || '').replace(/"/g, '""')}"`,
+        r.confidence,
+        `"${r.relationship_type}"`,
+        `"${(r.source_url || '').replace(/"/g, '""')}"`,
+        `"${(r.evidence_quote || '').replace(/"/g, '""')}"`,
+      ];
+    });
     const csvContent = 'data:text/csv;charset=utf-8,' + [headers.join(','), ...rows.map((e) => e.join(','))].join('\n');
     const encodedUri = encodeURI(csvContent);
     const link = document.createElement('a');
@@ -946,8 +962,9 @@ export const Scanner: React.FC = () => {
               </thead>
               <tbody className="divide-y divide-slate-800/60">
                 {filteredResults.map((item) => (
-                  <tr key={item.id} className="hover:bg-slate-800/40 transition-colors">
-                    {/* Client Company */}
+                  <React.Fragment key={item.id}>
+                    <tr className="hover:bg-slate-800/40 transition-colors">
+                      {/* Client Company */}
                     <td className="py-3 px-4 align-top">
                       <div className="font-bold text-white text-sm">
                         {item.company_name || 'Individual / Private Client'}
@@ -999,30 +1016,87 @@ export const Scanner: React.FC = () => {
 
                     {/* Decision Maker */}
                     <td className="py-3 px-4 align-top">
-                      <div className="font-semibold text-slate-200">
-                        {item.person_name || 'Account Executive / Leadership'}
-                      </div>
-                      <div className="text-slate-400 text-[11px] mt-0.5">
-                        {item.designation || 'Client Contact'}
-                      </div>
+                      {item.person_name ? (
+                        <>
+                          <div className="font-semibold text-slate-200 flex items-center gap-1.5">
+                            <User className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
+                            <span>{item.person_name}</span>
+                          </div>
+                          <div className="text-slate-400 text-[11px] mt-0.5">
+                            {item.designation || 'Key Decision Maker'}
+                          </div>
+                        </>
+                      ) : (
+                        <div>
+                          <span className="px-2 py-0.5 rounded text-[10px] font-mono font-medium bg-slate-800 text-slate-300 border border-slate-700/60 inline-flex items-center gap-1">
+                            <Building2 className="w-3 h-3 text-cyan-400" />
+                            Company Target
+                          </span>
+                          <div className="text-slate-500 text-[10px] mt-0.5 italic">
+                            Verified business channels
+                          </div>
+                        </div>
+                      )}
                     </td>
 
                     {/* Verified Channels */}
                     <td className="py-3 px-4 align-top">
-                      <div className="space-y-1">
+                      <div className="space-y-1.5">
                         {item.contacts?.email ? (
-                          <div className="flex items-center gap-1.5 text-emerald-400 font-mono text-[11px]">
-                            <Mail className="w-3 h-3 shrink-0" />
-                            <span className="truncate max-w-[180px]">{item.contacts.email}</span>
+                          <div className="flex items-center gap-1.5 group">
+                            <div className="flex items-center gap-1 text-emerald-400 font-mono text-[11px]">
+                              <Mail className="w-3 h-3 shrink-0" />
+                              <span className="truncate max-w-[170px]">{item.contacts.email}</span>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => handleCopyChannel(`email-${item.id}`, item.contacts.email!)}
+                              className="text-slate-500 hover:text-slate-200 transition-colors p-0.5 rounded cursor-pointer"
+                              title="Copy email"
+                            >
+                              {copiedId === `email-${item.id}` ? (
+                                <Check className="w-3 h-3 text-emerald-400" />
+                              ) : (
+                                <Copy className="w-3 h-3" />
+                              )}
+                            </button>
                           </div>
                         ) : null}
 
                         {item.contacts?.phone ? (
-                          <div className="flex items-center gap-1.5 text-slate-300 font-mono text-[11px]">
-                            <Phone className="w-3 h-3 shrink-0" />
-                            <span>{item.contacts.phone}</span>
+                          <div className="flex items-center gap-1.5 group">
+                            <div className="flex items-center gap-1 text-slate-300 font-mono text-[11px]">
+                              <Phone className="w-3 h-3 shrink-0" />
+                              <span>{item.contacts.phone}</span>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => handleCopyChannel(`phone-${item.id}`, item.contacts.phone!)}
+                              className="text-slate-500 hover:text-slate-200 transition-colors p-0.5 rounded cursor-pointer"
+                              title="Copy phone"
+                            >
+                              {copiedId === `phone-${item.id}` ? (
+                                <Check className="w-3 h-3 text-emerald-400" />
+                              ) : (
+                                <Copy className="w-3 h-3" />
+                              )}
+                            </button>
                           </div>
                         ) : null}
+
+                        {/* Contact Form Links */}
+                        {item.contacts?.channels?.filter((c: any) => c.type === 'contact_form').slice(0, 1).map((cf: any, idx: number) => (
+                          <a
+                            key={idx}
+                            href={cf.value}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="flex items-center gap-1.5 text-cyan-400 hover:underline font-mono text-[11px]"
+                          >
+                            <ExternalLink className="w-3 h-3 shrink-0" />
+                            <span>Contact Form</span>
+                          </a>
+                        ))}
 
                         {item.contacts?.linkedin ? (
                           <a
@@ -1036,8 +1110,19 @@ export const Scanner: React.FC = () => {
                           </a>
                         ) : null}
 
-                        {!item.contacts?.email && !item.contacts?.phone && !item.contacts?.linkedin && (
-                          <span className="text-slate-400 text-[11px] italic">No direct channels published</span>
+                        {!item.contacts?.email && !item.contacts?.phone && !item.contacts?.linkedin && (!item.contacts?.channels || item.contacts.channels.length === 0) && (
+                          <span className="text-slate-500 text-[11px] italic">No direct channels published</span>
+                        )}
+
+                        {item.contacts?.channels && item.contacts.channels.length > 2 && (
+                          <button
+                            type="button"
+                            onClick={() => setExpandedRowId(expandedRowId === item.id ? null : item.id)}
+                            className="text-[10px] text-cyan-400 hover:text-cyan-300 flex items-center gap-1 font-mono mt-0.5 cursor-pointer"
+                          >
+                            <span>{expandedRowId === item.id ? 'Hide details' : `+${item.contacts.channels.length - 2} more channels`}</span>
+                            {expandedRowId === item.id ? <ChevronUp className="w-2.5 h-2.5" /> : <ChevronDown className="w-2.5 h-2.5" />}
+                          </button>
                         )}
                       </div>
                     </td>
@@ -1057,6 +1142,49 @@ export const Scanner: React.FC = () => {
                       </span>
                     </td>
                   </tr>
+
+                  {/* Expandable channels drawer row */}
+                  {expandedRowId === item.id && (
+                    <tr className="bg-slate-950/80 border-b border-slate-800">
+                      <td colSpan={5} className="p-4 space-y-3">
+                        <div className="flex items-center justify-between text-xs font-mono text-slate-400 border-b border-slate-800 pb-2">
+                          <span className="font-bold text-slate-200">Enriched Intelligence Dossier: {item.company_name}</span>
+                          <span className="text-[10px] text-cyan-400">All Discovered Channels ({item.contacts?.channels?.length || 0})</span>
+                        </div>
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                          {item.contacts?.channels?.map((ch: any, cidx: number) => (
+                            <div key={cidx} className="bg-slate-900 border border-slate-800 rounded-lg p-2.5 space-y-1">
+                              <div className="flex items-center justify-between text-[10px] font-mono text-slate-400">
+                                <span className="uppercase font-bold text-cyan-400">{ch.type}</span>
+                                <span className="text-slate-500">{ch.scope?.replace(/_/g, ' ') || 'public'}</span>
+                              </div>
+                              <div className="text-xs font-mono text-slate-200 truncate flex items-center justify-between">
+                                <span className="truncate">{ch.value}</span>
+                                <button
+                                  type="button"
+                                  onClick={() => handleCopyChannel(`ch-${item.id}-${cidx}`, ch.value)}
+                                  className="text-slate-500 hover:text-slate-200 ml-2"
+                                  title="Copy"
+                                >
+                                  {copiedId === `ch-${item.id}-${cidx}` ? (
+                                    <Check className="w-3 h-3 text-emerald-400" />
+                                  ) : (
+                                    <Copy className="w-3 h-3" />
+                                  )}
+                                </button>
+                              </div>
+                              {ch.evidence_quote && (
+                                <p className="text-[10px] text-slate-500 italic truncate">
+                                  {ch.evidence_quote}
+                                </p>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                </React.Fragment>
                 ))}
               </tbody>
             </table>

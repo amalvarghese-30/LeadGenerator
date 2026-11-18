@@ -121,6 +121,22 @@ async def create_contact(
         if not existing.get("company_name") and company_name:
             updates["company_name"] = company_name
 
+        # Preserve multi-company associations
+        assoc_comps = list(existing.get("associated_companies") or [])
+        if existing.get("company_id") and not any(ac.get("company_id") == existing["company_id"] for ac in assoc_comps if isinstance(ac, dict)):
+            assoc_comps.append({
+                "company_id": existing.get("company_id"),
+                "company_name": existing.get("company_name"),
+                "designation": existing.get("designation"),
+            })
+        if company_id and not any(ac.get("company_id") == company_id for ac in assoc_comps if isinstance(ac, dict)):
+            assoc_comps.append({
+                "company_id": company_id,
+                "company_name": company_name,
+                "designation": data.get("designation"),
+            })
+            updates["associated_companies"] = assoc_comps
+
         # Merge business_contacts
         merged_contacts = dict(existing.get("business_contacts", {}))
         for k, v in contacts_dict.items():
@@ -176,6 +192,7 @@ async def create_contact(
         "dedup_key": dedup_key,
         "company_id": company_id,
         "company_name": company_name,
+        "associated_companies": data.get("associated_companies") or ([{"company_id": company_id, "company_name": company_name, "designation": data.get("designation")}] if company_id else []),
         "email": email,
         "phone": phone,
         "linkedin_url": linkedin,

@@ -60,8 +60,33 @@ class PublicPhoneExtractor:
                         confidence=0.85 if scope == "person_direct_work" else 0.7,
                     ))
 
-        # 2. Text matches
+        # 2. Native phonenumbers libphonenumber text matching (handles international & 5+5 Indian mobile)
         text = soup.get_text(separator=" ", strip=True)
+        try:
+            for match in phonenumbers.PhoneNumberMatcher(text, default_region):
+                if phonenumbers.is_valid_number(match.number):
+                    e164 = phonenumbers.format_number(match.number, phonenumbers.PhoneNumberFormat.E164)
+                    if e164 not in seen_numbers:
+                        seen_numbers.add(e164)
+                        pos = match.start
+                        start = max(0, pos - 60)
+                        end = min(len(text), match.end + 60)
+                        context = text[start:end].strip()
+                        scope = PublicPhoneExtractor.classify_scope(context, target_person_name)
+                        results.append(ExtractedPhone(
+                            value=e164,
+                            original_text=match.raw_string,
+                            scope=scope,
+                            source_url=source_url,
+                            source_type="webpage",
+                            evidence_quote=f"...{context}...",
+                            country_code=match.number.country_code,
+                            confidence=0.85 if scope == "person_direct_work" else 0.75,
+                        ))
+        except Exception:
+            pass
+
+        # 3. Regex fallback
         raw_matches = PHONE_REGEX.findall(text)
         for raw in raw_matches:
             clean = raw.strip().strip(".,;:()")

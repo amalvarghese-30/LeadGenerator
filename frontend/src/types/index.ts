@@ -34,16 +34,34 @@ export interface Provider {
   updated_at: string;
 }
 
+export interface AssociatedPerson {
+  contact_id?: string;
+  full_name: string;
+  designation?: string;
+  linkedin_url?: string;
+  verification_status?: string;
+  confidence?: number;
+}
+
 export interface Company {
   id: string;
   name: string;
   website?: string;
   domain?: string;
   industry?: string;
+  description?: string;
+  address?: string;
+  aliases?: string[];
   country?: string;
   city?: string;
+  state?: string;
   linkedin_url?: string;
   public_contact: Record<string, string>;
+  public_contact_channels?: ContactChannel[];
+  social_profiles?: any;
+  associated_people?: AssociatedPerson[];
+  enrichment_status?: string;
+  last_enriched_at?: string;
   verification_status: string;
   created_at: string;
   updated_at?: string;
@@ -89,6 +107,15 @@ export interface Contact {
   phone?: string;
   professional_urls: Record<string, string>;
   business_contacts: Record<string, string>;
+  associated_companies?: Array<{
+    company_id: string;
+    company_name: string;
+    designation?: string;
+    source?: string;
+    confidence?: number;
+    verification_status?: string;
+    verified_at?: string;
+  }>;
   contact_channels?: ContactChannel[];
   contact_verification_status: 'discovered' | 'unverified' | 'source_reviewed' | 'company_verified' | 'contact_source_verified' | 'verified' | 'human_approved' | 'rejected';
   enrichment_status?: EnrichmentStatus;

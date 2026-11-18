@@ -12,6 +12,7 @@ import { Card } from '../../components/ui/Card';
 import { Badge } from '../../components/ui/Badge';
 import { LoadingSpinner } from '../../components/ui/LoadingSpinner';
 import { formatDateTime } from '../../utils/format';
+import { CompanyDetailModal } from '../Companies/CompanyDetailModal';
 
 const PLATFORM_COLORS: Record<string, { bg: string; text: string; border: string; badge: string }> = {
     linkedin: { bg: 'bg-blue-50', text: 'text-blue-700', border: 'border-blue-200', badge: 'bg-blue-600 text-white' },
@@ -36,6 +37,7 @@ export const ResearchReport: React.FC = () => {
     const [error, setError] = useState<string | null>(null);
     const [showRejected, setShowRejected] = useState(false);
     const [activeTab, setActiveTab] = useState<'person' | 'provider'>('provider');
+    const [selectedCompany, setSelectedCompany] = useState<any | null>(null);
 
     useEffect(() => {
         if (!jobId) return;
@@ -562,6 +564,120 @@ export const ResearchReport: React.FC = () => {
                         </div>
                     </Card>
 
+                    {/* Enriched Client Companies & Decision-Makers Dossiers */}
+                    {report?.companies && report.companies.length > 0 && (
+                        <Card className="p-0 overflow-hidden shadow-sm">
+                            <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
+                                <div>
+                                    <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                                        <Building2 className="w-4 h-4 text-indigo-600" /> Discovered Client Companies & Official Contact Dossiers
+                                    </h3>
+                                    <p className="text-[11px] text-slate-500 mt-0.5">
+                                        Official websites crawled, public contact channels extracted, and leadership identified.
+                                    </p>
+                                </div>
+                                <span className="text-xs font-medium text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-full border border-emerald-200">
+                                    {report.companies.length} enriched client organizations
+                                </span>
+                            </div>
+
+                            <div className="divide-y divide-slate-100">
+                                {report.companies.map((comp: any, idx: number) => {
+                                    const emails = (comp.public_contact_channels || []).filter((c: any) => c.type === 'email');
+                                    const phones = (comp.public_contact_channels || []).filter((c: any) => c.type === 'phone');
+                                    const forms = (comp.public_contact_channels || []).filter((c: any) => c.type === 'contact_form');
+                                    const people = comp.associated_people || [];
+
+                                    return (
+                                        <div key={comp.id || idx} className="p-4 hover:bg-slate-50/60 transition-colors">
+                                            <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+                                                <div>
+                                                    <div className="flex items-center gap-2 flex-wrap">
+                                                        <h4 className="font-bold text-slate-900 text-sm">{comp.name}</h4>
+                                                        <Badge variant={comp.enrichment_status === 'enriched' ? 'success' : 'default'}>
+                                                            {comp.enrichment_status === 'enriched' ? 'Enriched' : 'Discovered'}
+                                                        </Badge>
+                                                        {comp.industry && (
+                                                            <span className="text-slate-500 text-xs font-medium">• {comp.industry}</span>
+                                                        )}
+                                                    </div>
+
+                                                    <div className="flex items-center gap-3 text-xs text-slate-500 mt-1 flex-wrap">
+                                                        {comp.website && (
+                                                            <a
+                                                                href={comp.website}
+                                                                target="_blank"
+                                                                rel="noreferrer"
+                                                                className="text-blue-600 hover:underline flex items-center gap-1 font-mono text-[11px]"
+                                                            >
+                                                                <Globe className="w-3 h-3 text-slate-400" />
+                                                                {comp.domain || comp.website}
+                                                                <ExternalLink className="w-2.5 h-2.5" />
+                                                            </a>
+                                                        )}
+                                                        {comp.address && (
+                                                            <span className="flex items-center gap-1 text-slate-600">
+                                                                <MapPin className="w-3 h-3 text-slate-400" />
+                                                                {comp.address}
+                                                            </span>
+                                                        )}
+                                                    </div>
+                                                </div>
+
+                                                <div className="flex items-center gap-2 flex-wrap">
+                                                    {emails.length > 0 && (
+                                                        <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-blue-50 text-blue-700 text-xs font-medium">
+                                                            <Mail className="w-3 h-3" /> {emails.length} email{emails.length > 1 ? 's' : ''}
+                                                        </span>
+                                                    )}
+                                                    {phones.length > 0 && (
+                                                        <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-emerald-50 text-emerald-700 text-xs font-medium">
+                                                            <Phone className="w-3 h-3" /> {phones.length} phone{phones.length > 1 ? 's' : ''}
+                                                        </span>
+                                                    )}
+                                                    {forms.length > 0 && (
+                                                        <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-purple-50 text-purple-700 text-xs font-medium">
+                                                            <FileText className="w-3 h-3" /> Form
+                                                        </span>
+                                                    )}
+                                                    {people.length > 0 && (
+                                                        <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-indigo-50 text-indigo-700 text-xs font-medium">
+                                                            <UserCheck className="w-3 h-3" /> {people.length} leader{people.length > 1 ? 's' : ''}
+                                                        </span>
+                                                    )}
+                                                    <button
+                                                        onClick={() => setSelectedCompany(comp)}
+                                                        className="px-3 py-1 rounded-lg bg-white border border-slate-200 hover:bg-slate-50 text-indigo-600 text-xs font-semibold shadow-2xs transition-colors"
+                                                    >
+                                                        View Full Dossier
+                                                    </button>
+                                                </div>
+                                            </div>
+
+                                            {/* Discovered Leaders preview */}
+                                            {people.length > 0 && (
+                                                <div className="mt-3 pt-2.5 border-t border-slate-100 flex items-center gap-3 flex-wrap">
+                                                    <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">Identified Leadership:</span>
+                                                    {people.map((p: any, pIdx: number) => (
+                                                        <div key={pIdx} className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded bg-slate-100 text-slate-800 text-xs">
+                                                            <span className="font-semibold">{p.full_name}</span>
+                                                            <span className="text-slate-500 text-[11px]">({p.designation || 'Leader'})</span>
+                                                            {p.linkedin_url && (
+                                                                <a href={p.linkedin_url} target="_blank" rel="noreferrer" className="text-blue-600 hover:underline">
+                                                                    <ExternalLink className="w-2.5 h-2.5" />
+                                                                </a>
+                                                            )}
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            )}
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        </Card>
+                    )}
+
                     {/* Validated Client References Table */}
                     <Card className="p-0 overflow-hidden shadow-sm">
                         <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
@@ -704,6 +820,14 @@ export const ResearchReport: React.FC = () => {
                         </Card>
                     )}
                 </div>
+            )}
+
+            {selectedCompany && (
+                <CompanyDetailModal
+                    isOpen={!!selectedCompany}
+                    onClose={() => setSelectedCompany(null)}
+                    company={selectedCompany}
+                />
             )}
         </div>
     );

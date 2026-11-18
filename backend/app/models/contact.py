@@ -37,6 +37,7 @@ class ContactDocument(BaseModel):
     department: Optional[str] = None
     company_id: Optional[str] = None  # reference to companies collection
     company_name: Optional[str] = None  # denormalized for performance
+    associated_companies: List[Dict[str, Any]] = Field(default_factory=list)  # multiple company associations [{company_id, company_name, designation}]
     
     # Backwards-compatible dictionaries
     professional_urls: Dict[str, str] = Field(default_factory=dict)  # {linkedin, twitter, instagram, website}

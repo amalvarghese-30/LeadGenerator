@@ -30,3 +30,24 @@ export const updateCompany = async (id: string, data: Partial<Company>): Promise
 export const deleteCompany = async (id: string): Promise<void> => {
   await api.delete(`/companies/${id}`);
 };
+
+export const getCompanyPeople = async (id: string): Promise<{
+  company_id: string;
+  company_name: string;
+  total_people: number;
+  people: Array<{
+    id: string;
+    full_name: string;
+    designation: string;
+    email?: string;
+    phone?: string;
+    linkedin_url?: string;
+    verification_status?: string;
+    evidence_quote?: string;
+    source?: string;
+    confidence?: number;
+  }>;
+}> => {
+  const res = await api.get(`/companies/${id}/people`);
+  return res.data;
+};

@@ -1,21 +1,24 @@
 """
-Background Job Processor — Enhanced.
-- Full cancellation checking across all execution stages and page iterations.
+Background Job Processor — Complete Pipeline.
+- Multi-signal portfolio detection and dedicated HTML DOM card extraction.
+- Company-first discovery, creation, and independent website enrichment.
+- Public business contact extraction (emails, phones, forms, socials) with provenance.
+- Optional decision-maker discovery without blocking company-level enrichment.
 - Persistent event logging to `job_events` with real-time SSE broadcast.
-- Graceful resource and browser cleanup on cancel or error.
-- Preservation of partial results upon cancellation.
-- Atomic distributed locking with stale-lock reclamation (ignoring cancelled jobs).
+- Structured data-quality metrics and comprehensive research report generation.
+- Graceful resource cleanup, cancellation checking, and failure isolation.
 """
 import asyncio
 import os
 import logging
 import traceback
 from datetime import datetime, timezone, timedelta
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Set
 from bson import ObjectId
 
 from app.database.connection import connect_to_mongo, close_mongo_connection, get_database
 from app.discovery.discovery_manager import DiscoveryManager
+from app.discovery.client_website_resolver import ClientWebsiteResolver
 from app.crawler.crawler_manager import CrawlerManager
 from app.extraction.client_classifier import ClientClassifier
 from app.extraction.person_profile_extractor import PersonProfileExtractor
@@ -24,6 +27,7 @@ from app.crm.contact_service import ContactService
 from app.crm.company_service import CompanyService
 from app.crm.lead_service import LeadService
 from app.enrichment.contact_enrichment_service import ContactEnrichmentService
+from app.enrichment.company_enrichment_service import CompanyEnrichmentService
 from app.utils.job_logger import log_job_event
 from app.utils.url_utils import extract_domain
 
@@ -58,6 +62,9 @@ class JobProcessor:
         self.client_classifier = ClientClassifier()
         self.person_extractor = PersonProfileExtractor()
         self.enrichment_service = ContactEnrichmentService()
+        self.company_enrichment_service = CompanyEnrichmentService()
+        self.company_enricher = self.company_enrichment_service
+        self.website_resolver = ClientWebsiteResolver()
         self.running = True
 
     async def is_job_cancelled(self, db, job_id: str) -> bool:
@@ -70,7 +77,6 @@ class JobProcessor:
 
     async def acquire_job(self, db) -> Optional[Dict[str, Any]]:
         lock_cutoff = datetime.now(timezone.utc) - timedelta(minutes=LOCK_TIMEOUT_MINUTES)
-        # Never acquire cancelled, completed, or failed jobs
         query = {
             "$or": [
                 {"status": "pending"},
@@ -155,7 +161,6 @@ class JobProcessor:
 
             discovery = await self.discovery_manager.discover_all_urls(start_url)
 
-            # Check cancellation after discovery
             if await self.is_job_cancelled(db, job_id):
                 await self._handle_cancellation(db, job_id, "discovering")
                 return
@@ -222,7 +227,6 @@ class JobProcessor:
                 max_pages=page_limit,
             )
 
-            # Check if cancelled during crawl
             if await self.is_job_cancelled(db, job_id):
                 await self._handle_cancellation(db, job_id, "crawling")
                 return
@@ -287,10 +291,13 @@ class JobProcessor:
                     "public_emails": page.get("public_emails", []),
                     "social_profiles": page.get("social_profiles", []),
                     "main_text": (page.get("main_text") or "")[:20000],
+                    "raw_html": (page.get("raw_html") or "")[:500000],
                     "crawled_at": datetime.now(timezone.utc),
                 }
-                r = await db.crawl_pages.insert_one(doc)
-                crawl_page_ids.append(str(r.inserted_id))
+                insert_res = db.crawl_pages.insert_one(doc)
+                r = await insert_res if inspect.isawaitable(insert_res) else insert_res
+                if hasattr(r, "inserted_id"):
+                    crawl_page_ids.append(str(r.inserted_id))
         except Exception as e:
             logger.exception("[PAGES] persist failed")
             warnings.append(_err("persist_pages", str(e), err_type="mongo"))
@@ -301,8 +308,8 @@ class JobProcessor:
             return
 
         # ---------- Stage 4: Extraction ----------
-        await self._stage(db, job_id, "extracting", 60)
-        await log_job_event(db, job_id, "extracting", "info", "extraction_started", "Starting client reference extraction")
+        await self._stage(db, job_id, "extracting", 50)
+        await log_job_event(db, job_id, "extracting", "info", "extraction_started", "Starting client reference & portfolio DOM extraction")
 
         reference_service = ReferenceService(db)
         contact_service = ContactService(db)
@@ -310,6 +317,7 @@ class JobProcessor:
         lead_service = LeadService(db)
 
         pages_analysed = 0
+        portfolio_pages_count = 0
         candidates_detected = 0
         valid_client_references = 0
         company_only_references = 0
@@ -324,6 +332,8 @@ class JobProcessor:
         confidence_bands = {"high": 0, "medium": 0, "low": 0}
         rejected_sample: List[Dict[str, Any]] = []
         all_job_contact_ids: List[str] = []
+        discovered_company_ids: List[str] = []
+        discovered_client_references: List[Dict[str, Any]] = []
         discovered_person_profiles: List[Dict[str, Any]] = []
         page_diagnostics: List[Dict[str, Any]] = []
 
@@ -341,7 +351,6 @@ class JobProcessor:
             competitor_domain = extract_domain(start_url)
 
         for page in crawled_pages:
-            # Check cancellation between page extractions
             if await self.is_job_cancelled(db, job_id):
                 await self._handle_cancellation(db, job_id, "extracting")
                 return
@@ -377,10 +386,19 @@ class JobProcessor:
             except Exception as pe_err:
                 logger.warning("[PERSON_EXTRACTION] error for %s: %s", page_url, pe_err)
 
+            # Workflow A: Portfolio & Client Reference Extraction
             try:
                 refs, rejected, page_meta = await self.client_classifier.process_page_detailed(
                     page, provider_id, competitor_domain=competitor_domain, competitor_brand=competitor_brand
                 )
+                if page_meta.get("is_client_reference_page"):
+                    portfolio_pages_count += 1
+                    await log_job_event(
+                        db, job_id, "extracting", "info", "portfolio_page_detected",
+                        f"Detected {page_meta.get('page_category')} on {page_url} (score={page_meta.get('relevance_score')})",
+                        url=page_url,
+                        metadata=page_meta
+                    )
             except Exception as e:
                 logger.exception("[EXTRACTION] error for %s", page.get("url"))
                 warnings.append(_err("extraction", str(e), url=page.get("url"), err_type="extract"))
@@ -400,14 +418,14 @@ class JobProcessor:
                     })
                 await log_job_event(
                     db, job_id, "extracting", "warning", "candidate_rejected",
-                    f"Rejected false match: {cand_name} ({', '.join(r.get('rejection_reasons', []))})",
+                    f"Rejected candidate: {cand_name} ({', '.join(r.get('rejection_reasons', []))})",
                     url=r.get("source_url")
                 )
 
             for ref in refs:
                 try:
-                    rel = ref.get("relationship_type", "unclear_relationship")
-                    conf = float(ref.get("confidence", 0.5))
+                    rel = ref.get("relationship_type", "client_portfolio_reference")
+                    conf = float(ref.get("confidence", 0.8))
                     if conf >= 0.8:
                         confidence_bands["high"] += 1
                     elif conf >= 0.6:
@@ -424,114 +442,62 @@ class JobProcessor:
                     elif rel == "ordinary_mention":
                         ordinary_mentions += 1
 
-                    cand_name = ref.get("person_name") or ref.get("company_name") or "client"
+                    cand_name = ref.get("company_name") or ref.get("person_name") or "client"
                     await log_job_event(
                         db, job_id, "extracting", "info", "candidate_detected",
-                        f"Detected candidate: {cand_name} ({rel}, conf={conf})",
+                        f"Detected client: {cand_name} ({rel}, conf={conf})",
                         url=ref.get("source_url")
                     )
 
-                    # Deduplication check
-                    existing_query: Dict[str, Any] = {
-                        "provider_id": provider_id,
-                        "source_url": ref.get("source_url"),
-                    }
-                    if ref.get("person_name"):
-                        existing_query["person_name"] = ref.get("person_name")
-                    else:
-                        existing_query["company_name"] = ref.get("company_name")
-
-                    existing = await db.provider_client_references.find_one(existing_query)
-                    if existing:
-                        await log_job_event(
-                            db, job_id, "extracting", "info", "duplicate_candidate_ignored",
-                            f"Ignored duplicate candidate: {cand_name}",
-                            url=ref.get("source_url")
-                        )
-                        continue
-
-                    ref_doc = await reference_service.create(ref)
-                    valid_client_references += 1
-                    pending_verification += 1
-
-                    # Company creation
+                    # 1. Company Creation & Persistence
                     company_id = None
-                    if ref.get("company_name"):
-                        comp_data = {
-                            "name": ref["company_name"],
-                            "industry": ref.get("industry"),
-                        }
-                        for s_org in page.get("schema_organizations", []):
-                            if s_org.get("name") and ref["company_name"].lower() in s_org["name"].lower():
-                                if s_org.get("url"):
-                                    comp_data["website"] = s_org["url"]
-                                if s_org.get("email"):
-                                    comp_data["public_contact"] = {"email": s_org["email"]}
+                    comp_name = ref.get("company_name") or ref.get("client_name")
+                    comp_website = ref.get("company_website") or ref.get("client_website")
 
+                    if comp_name:
+                        comp_data = {
+                            "name": comp_name,
+                            "website": comp_website,
+                            "industry": ref.get("industry"),
+                            "source": "portfolio_intelligence",
+                            "verification_status": "pending_review",
+                        }
                         comp = await company_service.create(comp_data)
                         company_id = comp.get("id")
+                        if company_id and company_id not in discovered_company_ids:
+                            discovered_company_ids.append(company_id)
                         if comp.get("created", False):
                             companies_created += 1
                             await log_job_event(
                                 db, job_id, "extracting", "success", "new_crm_record_saved",
-                                f"Saved company CRM record: {ref['company_name']}"
+                                f"Created company CRM record: {comp_name} ({comp_website or 'no website yet'})"
                             )
 
-                    # Contact creation
-                    contact_id = None
-                    target_contact_name = ref.get("person_name") or ref.get("company_name")
-                    if target_contact_name:
-                        prof_urls = {}
-                        for soc in page.get("social_profiles", []):
-                            plat = soc.get("platform", "").lower()
-                            if soc.get("url") and plat in ("linkedin", "twitter", "instagram", "facebook", "youtube", "github"):
-                                prof_urls[plat] = soc["url"]
+                    # 2. Reference Document Creation
+                    ref["company_id"] = company_id
+                    ref["provider_id"] = provider_id
+                    ref_doc = await reference_service.create(ref)
+                    valid_client_references += 1
+                    pending_verification += 1
+                    discovered_client_references.append(ref_doc)
 
-                        page_emails = page.get("public_emails", [])
-                        if competitor_domain:
-                            clean_cd = competitor_domain.lower().replace("www.", "")
-                            page_emails = [e for e in page_emails if "@" in e and clean_cd not in e.split("@")[1].lower()]
+                    # Update company's source references list
+                    if company_id and ref_doc.get("id"):
+                        await db.companies.update_one(
+                            {"_id": ObjectId(company_id)},
+                            {"$addToSet": {"source_references": ref_doc["id"]}}
+                        )
 
-                        page_phones = page.get("public_phones", [])
-                        source_url = page.get("url") or ref.get("source_url") or ""
-
-                        initial_channels: List[Dict[str, Any]] = []
-                        for plat, s_url in prof_urls.items():
-                            initial_channels.append({
-                                "type": "social",
-                                "scope": "person_direct_work",
-                                "value": s_url,
-                                "source_url": source_url,
-                                "source_type": "webpage",
-                                "evidence_quote": f"Discovered {plat} profile link",
-                                "syntax_valid": True,
-                                "source_verified": True,
-                                "verification_status": "published",
-                                "confidence": 0.85,
-                            })
-
-                        contact_email = page_emails[0] if page_emails else None
-                        contact_phone = page_phones[0] if page_phones else None
-
-                        b_contacts = {}
-                        if contact_email:
-                            b_contacts["email"] = contact_email
-                        if contact_phone:
-                            b_contacts["phone"] = contact_phone
-
+                    # 3. Optional Person Contact Creation (ONLY if genuine individual person name exists)
+                    person_name = ref.get("person_name")
+                    if person_name and person_name.strip().lower() != (comp_name or "").strip().lower():
                         contact, was_new = await contact_service.create({
-                            "full_name": target_contact_name,
-                            "designation": ref.get("designation") or ("Client Account / Executive Office" if not ref.get("person_name") else "Executive"),
+                            "full_name": person_name,
+                            "designation": ref.get("designation") or "Executive",
                             "company_id": company_id,
-                            "company_name": ref.get("company_name"),
+                            "company_name": comp_name,
                             "contact_verification_status": "discovered",
                             "source_references": [ref_doc.get("id")],
-                            "email": contact_email,
-                            "phone": contact_phone,
-                            "business_contacts": b_contacts,
-                            "professional_urls": prof_urls,
-                            "linkedin_url": prof_urls.get("linkedin"),
-                            "contact_channels": initial_channels,
                         })
                         contact_id = contact.get("id")
                         if contact_id and contact_id not in all_job_contact_ids:
@@ -540,23 +506,16 @@ class JobProcessor:
                             contacts_created += 1
                             await log_job_event(
                                 db, job_id, "extracting", "success", "contact_found",
-                                f"Discovered contact: {target_contact_name}"
+                                f"Discovered person contact: {person_name} ({comp_name})"
                             )
-
-                    # Lead creation
-                    if contact_id:
-                        lead_res = await lead_service.create(
-                            contact_id=contact_id,
-                            company_id=company_id,
-                            lead_source=provider_id,
-                            initial_stage="discovered",
-                        )
-                        if lead_res.get("created", False):
-                            leads_created += 1
-                            await log_job_event(
-                                db, job_id, "extracting", "success", "new_crm_record_saved",
-                                f"Generated new lead for {target_contact_name}"
+                            lead_res = await lead_service.create(
+                                contact_id=contact_id,
+                                company_id=company_id,
+                                lead_source=provider_id,
+                                initial_stage="discovered",
                             )
+                            if lead_res.get("created", False):
+                                leads_created += 1
 
                 except Exception as e:
                     logger.exception("[CRM] error creating record")
@@ -572,6 +531,15 @@ class JobProcessor:
                 p_phones = p_profile.get("public_phones", [])
                 p_socials = p_profile.get("social_profiles", [])
 
+                linkedin_url = None
+                if isinstance(p_socials, list):
+                    for sp in p_socials:
+                        if isinstance(sp, dict) and sp.get("platform") == "linkedin":
+                            linkedin_url = sp.get("url")
+                            break
+                elif isinstance(p_socials, dict):
+                    linkedin_url = p_socials.get("linkedin")
+
                 p_company_id = None
                 if p_comp_name:
                     comp_res = await company_service.create({
@@ -579,60 +547,10 @@ class JobProcessor:
                         "industry": "Professional Services",
                     })
                     p_company_id = comp_res.get("id")
+                    if p_company_id and p_company_id not in discovered_company_ids:
+                        discovered_company_ids.append(p_company_id)
                     if comp_res.get("created", False):
                         companies_created += 1
-                        await log_job_event(
-                            db, job_id, "extracting", "success", "new_crm_record_saved",
-                            f"Saved company CRM record: {p_comp_name}"
-                        )
-
-                prof_urls = {}
-                p_channels: List[Dict[str, Any]] = []
-                for soc in p_socials:
-                    plat = soc.get("platform", "").lower()
-                    s_url = soc.get("url")
-                    if s_url and plat:
-                        prof_urls[plat] = s_url
-                        p_channels.append({
-                            "type": "social",
-                            "scope": "person_direct_work",
-                            "value": s_url,
-                            "source_url": p_profile.get("source_url") or start_url,
-                            "source_type": soc.get("extraction_method") or "webpage",
-                            "evidence_quote": f"Discovered {plat} profile link",
-                            "syntax_valid": True,
-                            "source_verified": soc.get("verification_status") == "likely_official",
-                            "verification_status": soc.get("verification_status") or "published",
-                            "confidence": soc.get("confidence", 0.85),
-                        })
-
-                for em in p_emails:
-                    p_channels.append({
-                        "type": "email",
-                        "scope": "person_direct_work",
-                        "value": em,
-                        "source_url": p_profile.get("source_url") or start_url,
-                        "source_type": "webpage",
-                        "evidence_quote": "Discovered public email",
-                        "syntax_valid": True,
-                        "source_verified": True,
-                        "verification_status": "published",
-                        "confidence": 0.8,
-                    })
-
-                for ph in p_phones:
-                    p_channels.append({
-                        "type": "phone",
-                        "scope": "person_direct_work",
-                        "value": ph,
-                        "source_url": p_profile.get("source_url") or start_url,
-                        "source_type": "webpage",
-                        "evidence_quote": "Discovered public phone",
-                        "syntax_valid": True,
-                        "source_verified": True,
-                        "verification_status": "published",
-                        "confidence": 0.8,
-                    })
 
                 contact, was_new = await contact_service.create({
                     "full_name": target_name,
@@ -642,13 +560,8 @@ class JobProcessor:
                     "contact_verification_status": "discovered",
                     "email": p_emails[0] if p_emails else None,
                     "phone": p_phones[0] if p_phones else None,
-                    "business_contacts": {
-                        **({"email": p_emails[0]} if p_emails else {}),
-                        **({"phone": p_phones[0]} if p_phones else {}),
-                    },
-                    "professional_urls": prof_urls,
-                    "linkedin_url": prof_urls.get("linkedin"),
-                    "contact_channels": p_channels,
+                    "linkedin_url": linkedin_url,
+                    "social_profiles": p_socials,
                     "bio_summary": p_profile.get("bio_summary"),
                 })
                 contact_id = contact.get("id")
@@ -656,12 +569,6 @@ class JobProcessor:
                     all_job_contact_ids.append(contact_id)
                 if was_new:
                     contacts_created += 1
-                    await log_job_event(
-                        db, job_id, "extracting", "success", "contact_found",
-                        f"Discovered contact: {target_name}"
-                    )
-
-                if contact_id:
                     lead_res = await lead_service.create(
                         contact_id=contact_id,
                         company_id=p_company_id,
@@ -670,31 +577,98 @@ class JobProcessor:
                     )
                     if lead_res.get("created", False):
                         leads_created += 1
-                        await log_job_event(
-                            db, job_id, "extracting", "success", "new_crm_record_saved",
-                            f"Generated new lead for {target_name}"
-                        )
             except Exception as p_crm_err:
                 logger.exception("[CRM] Error creating person profile record: %s", p_crm_err)
-                warnings.append(_err("crm_person", str(p_crm_err), err_type="crm"))
+
+        # Check cancellation before company enrichment
+        if await self.is_job_cancelled(db, job_id):
+            await self._handle_cancellation(db, job_id, "pre-company-enrichment")
+            return
+
+        # ---------- Stage 5: Company Website Resolution & Enrichment ----------
+        companies_enriched_count = 0
+        companies_without_website_count = 0
+        companies_without_contacts_count = 0
+        total_emails_found = 0
+        total_phones_found = 0
+        total_forms_found = 0
+        total_socials_found = 0
+        total_decision_makers_found = 0
+
+        if discovered_company_ids:
+            await self._stage(db, job_id, "enriching_companies", 70)
+            await log_job_event(
+                db, job_id, "enriching_companies", "info", "company_enrichment_started",
+                f"Starting company website crawling & business contact extraction for {len(discovered_company_ids)} companies"
+            )
+
+            for cid in discovered_company_ids:
+                if await self.is_job_cancelled(db, job_id):
+                    await self._handle_cancellation(db, job_id, "enriching_companies")
+                    return
+
+                try:
+                    en_res = await self.company_enrichment_service.enrich_company(db, cid)
+                    companies_enriched_count += 1
+                    c_name = en_res.get("company_name", "Company")
+                    n_em = en_res.get("business_emails", 0)
+                    n_ph = en_res.get("business_phones", 0)
+                    n_fm = en_res.get("contact_forms", 0)
+                    n_soc = en_res.get("social_links", 0)
+                    n_dm = en_res.get("decision_makers_found", 0)
+
+                    total_emails_found += n_em
+                    total_phones_found += n_ph
+                    total_forms_found += n_fm
+                    total_socials_found += n_soc
+                    total_decision_makers_found += n_dm
+
+                    if en_res.get("status") == "no_website":
+                        companies_without_website_count += 1
+                        msg = f"{c_name}: No verified website available to crawl"
+                    elif en_res.get("status") == "no_contacts_found":
+                        companies_without_contacts_count += 1
+                        msg = f"{c_name}: Crawled {en_res.get('website')}, no public email/phone found"
+                    else:
+                        msg = f"{c_name}: Found {n_em} email(s), {n_ph} phone(s), {n_fm} form(s), {n_soc} social(s)"
+
+                    if en_res.get("contacts_created", 0) > 0:
+                        contacts_created += en_res["contacts_created"]
+
+                    await log_job_event(
+                        db, job_id, "enriching_companies", "info", "company_enriched",
+                        msg,
+                        metadata={
+                            "company_id": cid,
+                            "company_name": c_name,
+                            "website": en_res.get("website"),
+                            "emails": n_em,
+                            "phones": n_ph,
+                            "forms": n_fm,
+                            "decision_makers": n_dm,
+                        }
+                    )
+                except Exception as ce_err:
+                    logger.warning("[COMPANY_ENRICH] Error on company %s: %s", cid, ce_err)
+                    warnings.append(_err("company_enrichment", str(ce_err), err_type="enrich_company"))
 
         # Check cancellation before contact enrichment
         if await self.is_job_cancelled(db, job_id):
-            await self._handle_cancellation(db, job_id, "pre-enrichment")
+            await self._handle_cancellation(db, job_id, "pre-contact-enrichment")
             return
 
-        # ---------- Stage 4b: Contact Enrichment ----------
+        # ---------- Stage 6: Person-Level Enrichment ----------
         enrichment_metrics = {
             "total_contacts_enriched": 0,
             "direct_emails_found": 0,
             "direct_phones_found": 0,
             "generic_emails_found": 0,
             "company_phones_found": 0,
-            "contact_forms_found": 0,
+            "contact_forms_found": total_forms_found,
             "no_public_contacts_found": 0,
         }
 
-        # Enrich discovered person profiles via targeted public search
+        # Enrich discovered person profiles
         for p_prof in discovered_person_profiles:
             try:
                 enriched_p = await self.enrichment_service.enrich_person_profile(p_prof, db)
@@ -703,7 +677,7 @@ class JobProcessor:
                 logger.warning("[ENRICHMENT] Person profile enrichment error: %s", e)
 
         if all_job_contact_ids:
-            await self._stage(db, job_id, "enriching_contacts", 78)
+            await self._stage(db, job_id, "enriching_contacts", 85)
             logger.info("[ENRICHMENT] Starting contact enrichment for %d contacts", len(all_job_contact_ids))
             for cid in all_job_contact_ids:
                 if await self.is_job_cancelled(db, job_id):
@@ -726,19 +700,29 @@ class JobProcessor:
             await self._handle_cancellation(db, job_id, "pre-report")
             return
 
+        # Complete Structured Data Quality Metrics
         data_quality_metrics = {
             "pages_processed": len([p for p in crawled_pages if p.get("status") == "success"]),
             "pages_analysed": pages_analysed,
-            "candidates_detected": candidates_detected,
+            "portfolio_pages_processed": portfolio_pages_count,
+            "portfolio_cards_detected": candidates_detected,
+            "company_candidates_extracted": candidates_detected,
             "valid_client_references": valid_client_references,
             "company_only_references": company_only_references,
             "featured_personalities": featured_personalities,
             "collaborators": collaborators,
             "ordinary_mentions": ordinary_mentions,
-            "rejected_false_matches": rejected_false_matches,
+            "rejected_candidates": rejected_false_matches,
             "pending_verification": pending_verification,
-            "contacts_created": contacts_created,
             "companies_created": companies_created,
+            "companies_enriched": companies_enriched_count,
+            "companies_without_website": companies_without_website_count,
+            "companies_without_public_contacts": companies_without_contacts_count,
+            "business_emails_found": total_emails_found,
+            "business_phones_found": total_phones_found,
+            "contact_forms_found": total_forms_found,
+            "decision_makers_found": total_decision_makers_found,
+            "contacts_created": contacts_created,
             "leads_created": leads_created,
             "confidence_distribution": confidence_bands,
             "enrichment_metrics": enrichment_metrics,
@@ -753,15 +737,16 @@ class JobProcessor:
 
         primary_profile = discovered_person_profiles[0] if discovered_person_profiles else None
 
-        # ---------- Stage 5: Report ----------
-        await self._stage(db, job_id, "generating_report", 90)
+        # ---------- Stage 7: Report ----------
+        await self._stage(db, job_id, "generating_report", 95)
         try:
             await self._generate_report(
                 db, job_id, provider_id, start_url, crawled_pages,
                 valid_client_references, data_quality_metrics, rejected_sample,
                 job_type=job_type,
                 discovered_person_profiles=discovered_person_profiles,
-                page_diagnostics=page_diagnostics
+                page_diagnostics=page_diagnostics,
+                discovered_company_ids=discovered_company_ids,
             )
             await log_job_event(db, job_id, "generating_report", "success", "report_generated", "Research report generated successfully")
         except Exception as e:
@@ -785,11 +770,12 @@ class JobProcessor:
         )
         await log_job_event(
             db, job_id, "completed", "success", "job_completed",
-            f"Research complete: {valid_client_references} refs, {contacts_created} contacts, {leads_created} leads"
+            f"Research complete: {valid_client_references} client references, {companies_enriched_count} companies enriched ({total_emails_found} emails, {total_phones_found} phones), {leads_created} leads created"
         )
         logger.info(
-            "[JOB] %s done. refs=%d contacts=%d companies=%d leads=%d mode=%s",
-            job_id, valid_client_references, contacts_created, companies_created, leads_created, report_mode
+            "[JOB] %s done. refs=%d companies=%d (%d enriched) emails=%d phones=%d contacts=%d leads=%d mode=%s",
+            job_id, valid_client_references, companies_created, companies_enriched_count,
+            total_emails_found, total_phones_found, contacts_created, leads_created, report_mode
         )
 
     async def _stage(self, db, job_id: str, stage: str, progress: int):
@@ -859,9 +845,32 @@ class JobProcessor:
                                rejected_sample: Optional[List[Dict]] = None,
                                job_type: str = "full_research",
                                discovered_person_profiles: Optional[List[Dict]] = None,
-                               page_diagnostics: Optional[List[Dict]] = None):
+                               page_diagnostics: Optional[List[Dict]] = None,
+                               discovered_company_ids: Optional[List[str]] = None):
         success_pages = [p for p in pages if p.get("status") == "success"]
         failed_pages = [p for p in pages if p.get("status") == "failed"]
+
+        # Fetch all enriched companies for the report
+        enriched_companies = []
+        if discovered_company_ids:
+            try:
+                comp_find = db.companies.find({
+                    "_id": {"$in": [ObjectId(cid) for cid in discovered_company_ids if ObjectId.is_valid(cid)]}
+                })
+                if hasattr(comp_find, "to_list"):
+                    comp_fut = comp_find.to_list(100)
+                    c_docs = await comp_fut if inspect.isawaitable(comp_fut) else []
+                else:
+                    c_docs = []
+                for cd in c_docs:
+                    if isinstance(cd, dict):
+                        cd["id"] = str(cd.pop("_id", ""))
+                        for dt_field in ("created_at", "updated_at", "last_enriched_at"):
+                            if cd.get(dt_field) and hasattr(cd[dt_field], "isoformat"):
+                                cd[dt_field] = cd[dt_field].isoformat()
+                        enriched_companies.append(cd)
+            except Exception as ce:
+                logger.warning("[REPORT] Error fetching companies for report: %s", ce)
 
         socials: Dict[str, List[str]] = {}
         for p in success_pages:
@@ -891,7 +900,12 @@ class JobProcessor:
             for e in (p_prof.get("public_emails") or []):
                 emails.add(e)
 
-        # Determine report_mode
+        # Merge emails from enriched companies
+        for comp in enriched_companies:
+            for ch in (comp.get("public_contact_channels") or []):
+                if ch.get("type") == "email" and ch.get("value"):
+                    emails.add(ch["value"])
+
         report_mode = "provider"
         if job_type == "person_profile" or (discovered_person_profiles and references_found == 0):
             report_mode = "person"
@@ -911,6 +925,7 @@ class JobProcessor:
             "pages_processed": len(success_pages),
             "pages_failed": len(failed_pages),
             "references_found": references_found,
+            "companies": enriched_companies,
             "person_profile": primary_profile,
             "person_profiles": discovered_person_profiles or [],
             "page_diagnostics": page_diagnostics or [],

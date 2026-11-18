@@ -72,3 +72,99 @@ async def delete_company_route(
     success = await delete_company(db, company_id)
     if not success:
         raise HTTPException(status_code=404, detail="Company not found")
+
+@router.get("/{company_id}/contact-channels")
+async def get_company_contact_channels_route(
+    company_id: str,
+    db: AsyncIOMotorDatabase = Depends(get_db),
+    _user: dict = Depends(get_current_user),
+):
+    doc = await get_company(db, company_id)
+    if not doc:
+        raise HTTPException(status_code=404, detail="Company not found")
+    return {
+        "company_id": company_id,
+        "company_name": doc.get("name"),
+        "website": doc.get("website"),
+        "enrichment_status": doc.get("enrichment_status", "pending"),
+        "last_enriched_at": doc.get("last_enriched_at"),
+        "public_contact": doc.get("public_contact", {}),
+        "public_contact_channels": doc.get("public_contact_channels", []),
+        "social_profiles": doc.get("social_profiles", {}),
+    }
+
+@router.post("/{company_id}/enrich")
+async def enrich_company_route(
+    company_id: str,
+    db: AsyncIOMotorDatabase = Depends(get_db),
+    _user: dict = Depends(get_current_user),
+):
+    from app.enrichment.company_enrichment_service import CompanyEnrichmentService
+    doc = await get_company(db, company_id)
+    if not doc:
+        raise HTTPException(status_code=404, detail="Company not found")
+    
+    service = CompanyEnrichmentService()
+    enriched_doc = await service.enrich_company(db, company_id)
+    return {
+        "success": bool(enriched_doc),
+        "company": _fmt(enriched_doc or doc),
+    }
+
+@router.get("/{company_id}/people")
+async def get_company_people_route(
+    company_id: str,
+    db: AsyncIOMotorDatabase = Depends(get_db),
+    _user: dict = Depends(get_current_user),
+):
+    doc = await get_company(db, company_id)
+    if not doc:
+        raise HTTPException(status_code=404, detail="Company not found")
+
+    cursor = db.contacts.find({
+        "$or": [
+            {"company_id": company_id},
+            {"associated_companies.company_id": str(company_id)},
+            {"company_name": doc.get("name")},
+        ]
+    })
+    contacts = await cursor.to_list(100) if hasattr(cursor, "to_list") else []
+
+    people = []
+    seen_names = set()
+    for c in contacts:
+        name = c.get("full_name")
+        if name and name.lower() not in seen_names:
+            seen_names.add(name.lower())
+            people.append({
+                "id": str(c.get("_id", "")),
+                "full_name": name,
+                "designation": c.get("designation") or "Executive",
+                "email": c.get("email"),
+                "phone": c.get("phone"),
+                "linkedin_url": c.get("linkedin_url"),
+                "verification_status": c.get("verification_status") or c.get("contact_verification_status", "verified"),
+                "evidence_quote": c.get("evidence_quote"),
+                "source": c.get("source"),
+            })
+
+    for ap in (doc.get("associated_people") or []):
+        if isinstance(ap, dict):
+            name = ap.get("full_name")
+            if name and name.lower() not in seen_names:
+                seen_names.add(name.lower())
+                people.append({
+                    "id": ap.get("contact_id") or "",
+                    "full_name": name,
+                    "designation": ap.get("designation") or "Executive",
+                    "linkedin_url": ap.get("linkedin_url"),
+                    "verification_status": ap.get("verification_status", "source_verified"),
+                    "confidence": ap.get("confidence", 0.8),
+                })
+
+    return {
+        "company_id": company_id,
+        "company_name": doc.get("name"),
+        "total_people": len(people),
+        "people": people,
+    }

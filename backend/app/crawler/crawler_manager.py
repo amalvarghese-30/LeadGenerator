@@ -303,6 +303,7 @@ class CrawlerManager:
                     "h1": rendered.get("h1", ""),
                     "h2s": rendered.get("h2s", []),
                     "main_text": rendered["main_text"],
+                    "raw_html": rendered.get("raw_html", ""),
                     "word_count": rendered["word_count"],
                     "extraction_method": render_method,
                     "javascript_rendered": True,
@@ -335,6 +336,7 @@ class CrawlerManager:
                 "h1": content.get("h1", ""),
                 "h2s": content.get("h2s", []),
                 "main_text": main_text,
+                "raw_html": content.get("raw_html") or (resp.text if resp else ""),
                 "word_count": word_count,
                 "public_emails": content.get("public_emails", []),
                 "public_phones": content.get("public_phones", []),
@@ -403,6 +405,7 @@ class CrawlerManager:
             content = self.extractor.extract(html, url)
             return {
                 "main_text": content.get("main_text", ""),
+                "raw_html": html,
                 "word_count": int(content.get("word_count", 0)),
                 "title": title or content.get("title", ""),
                 "h1": content.get("h1", ""),
@@ -450,6 +453,7 @@ class CrawlerManager:
             content = self.extractor.extract(html, url)
             return {
                 "main_text": content.get("main_text", ""),
+                "raw_html": html,
                 "word_count": int(content.get("word_count", 0)),
                 "title": title or content.get("title", ""),
                 "h1": content.get("h1", ""),

@@ -1,74 +1,90 @@
 """
-Multi-signal page classification and client-reference signal detection.
-Replaces simplistic keyword counters with structured multi-signal analysis across:
-- URL path structure
-- Page title & meta description
-- H1 / H2 headings
-- Content sections (case study sections, testimonial quotes, client grids)
-- Schema.org markup (Review, CaseStudy, ProfilePage, Service, Article)
-- Negative service / sales / article pitch detection
+Text extraction and multi-signal page relevance classification.
+Extracts published emails and classifies pages based on:
+  - URL signals
+  - Heading signals
+  - DOM structure signals (portfolio cards, grids, logo wraps)
+  - Content signals
+  - Section-level detection (services + portfolio co-existing on one page)
 """
 import re
+import logging
 from typing import Dict, List, Any, Optional
 from urllib.parse import urlparse
+from bs4 import BeautifulSoup
+
+logger = logging.getLogger(__name__)
 
 
 class TextExtractor:
     """Multi-signal page relevance and category classifier."""
 
     # Explicit URL path patterns
-    CASE_STUDY_URL_PATTERNS = [r'/case-stud', r'/client-stor', r'/success-stor', r'/results/']
-    PORTFOLIO_URL_PATTERNS = [r'/portfolio', r'/our-work', r'/work/', r'/projects/', r'/showcase']
-    TESTIMONIAL_URL_PATTERNS = [r'/testimonial', r'/reviews?/', r'/client-feedback', r'/what-clients-say']
-    CUSTOMER_STORY_URL_PATTERNS = [r'/customer-stor', r'/clients?/', r'/who-we-help']
+    CASE_STUDY_URL_PATTERNS = [
+        r'/case-stud', r'/client-stor', r'/success-stor', r'/results', r'/customer-stories',
+    ]
+    PORTFOLIO_URL_PATTERNS = [
+        r'/portfolio', r'/our-work', r'/work', r'/projects', r'/clients',
+        r'/our-clients', r'/client-portfolio', r'/showcase', r'/client-stories',
+    ]
+    TESTIMONIAL_URL_PATTERNS = [
+        r'/testimonial', r'/reviews?', r'/client-feedback', r'/what-clients-say', r'/what-our-clients-say',
+    ]
+    CUSTOMER_STORY_URL_PATTERNS = [
+        r'/customer-stor', r'/who-we-help', r'/customer-success',
+    ]
     CLIENT_PROFILE_URL_PATTERNS = [
         r'/client-profile', r'/featured-client', r'/spotlight',
-        r'/p/[a-z0-9_\-]+', r'/profile/[a-z0-9_\-]+', r'/person/[a-z0-9_\-]+', r'/people/[a-z0-9_\-]+'
+        r'/p/[a-z0-9_\-]+', r'/profile/[a-z0-9_\-]+', r'/person/[a-z0-9_\-]+', r'/people/[a-z0-9_\-]+',
     ]
 
     SERVICE_URL_PATTERNS = [
         r'/services?', r'/what-we-do', r'/solutions?', r'/offerings?', r'/packages?',
-        r'/pricing', r'/features?', r'/plans?', r'/consulting-services'
+        r'/pricing', r'/features?', r'/plans?', r'/consulting-services',
     ]
     ARTICLE_URL_PATTERNS = [
         r'/blog', r'/news', r'/articles?', r'/posts?', r'/insights?', r'/press-release',
-        r'/category/', r'/tag/', r'/author/'
+        r'/category/', r'/tag/', r'/author/',
     ]
     ABOUT_URL_PATTERNS = [
         r'/about', r'/team', r'/leadership', r'/company', r'/our-story', r'/careers',
-        r'/contact', r'/jobs'
+        r'/contact', r'/jobs',
     ]
     IRRELEVANT_URL_PATTERNS = [
         r'/privacy', r'/terms', r'/cookie', r'/legal', r'/sitemap', r'/login',
-        r'/signup', r'/cart', r'/checkout', r'/account'
+        r'/signup', r'/cart', r'/checkout', r'/account',
     ]
 
     # Strong in-content and heading indicators
     CASE_STUDY_HEADINGS = [
-        "case study", "client case study", "success story", "client results",
-        "transformation story", "how we helped", "the challenge", "the solution"
+        "case study", "case studies", "client case study", "success story", "success stories",
+        "client results", "transformation story", "how we helped", "the challenge", "the solution",
+        "customer stories", "read the full case studies",
     ]
     TESTIMONIAL_HEADINGS = [
         "client testimonial", "what our clients say", "what clients say", "client reviews",
-        "testimonials", "words from our clients", "feedback from clients", "client praise"
+        "testimonials", "words from our clients", "feedback from clients", "client praise",
     ]
     PORTFOLIO_HEADINGS = [
         "our work", "selected work", "featured projects", "recent work", "client portfolio",
-        "featured clients", "brands we have worked with", "our portfolio"
+        "featured clients", "brands we have worked with", "our portfolio", "our clients",
+        "portfolio & our clients", "selected projects", "trusted by", "our customers",
+        "websites & projects we built", "websites we built", "projects we built",
+        "client showcase", "clients & partners", "portfolio of",
     ]
     CUSTOMER_STORY_HEADINGS = [
-        "customer story", "customer stories", "client spotlight", "client success stories"
+        "customer story", "customer stories", "client spotlight", "client success stories",
     ]
     CLIENT_PROFILE_HEADINGS = [
-        "client profile", "published profile", "executive profile", "knowledge panel for"
+        "client profile", "published profile", "executive profile", "knowledge panel for",
     ]
 
-    # Negative service pitch phrases (indicate Service Page, not a client evidence page)
+    # Negative service pitch phrases
     SERVICE_PITCH_PHRASES = [
         "our services include", "we offer comprehensive", "our pricing plans", "request a quote",
         "book a free consultation", "choose the right plan", "what our service provides",
         "services we provide", "contact our sales team", "explore our packages",
-        "monthly retainer", "custom pricing", "hire our team", "core capabilities"
+        "monthly retainer", "custom pricing", "hire our team", "core capabilities",
     ]
 
     def classify_page_relevance(
@@ -79,52 +95,63 @@ class TextExtractor:
         h1: str = "",
         h2s: Optional[List[str]] = None,
         schema_types: Optional[List[str]] = None,
+        raw_html: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Classify page relevance for client reference discovery using multi-signal analysis.
-        Returns:
-            is_client_reference_page: bool (True only for verified client evidence pages)
-            relevance_score: int (0 to 100)
-            page_category: str
-            indicators_found: List[str]
-            rejection_reasons: List[str]
+        A service-oriented website containing a valid portfolio section is preserved as a portfolio page.
         """
         parsed = urlparse(url)
         path = parsed.path.lower()
         title_lower = title.lower()
         h1_lower = (h1 or "").lower()
         h2_list = [h.lower() for h in (h2s or [])]
-        combined_headings = f"{h1_lower} {' '.join(h2_list)}"
-        sample_text = (text or "")[:8000].lower()
+        combined_headings = f"{title_lower} {h1_lower} {' '.join(h2_list)}"
+        sample_text = (text or "")[:12000].lower()
         schema_set = {s.lower() for s in (schema_types or [])}
 
         indicators_found: List[str] = []
         negative_signals: List[str] = []
+        matched_sections: List[str] = []
 
         # 1. Immediate Irrelevant check
         if any(re.search(pat, path) for pat in self.IRRELEVANT_URL_PATTERNS):
             return {
+                "url": url,
                 "is_client_reference_page": False,
                 "relevance_score": 0,
                 "page_category": "Irrelevant",
                 "indicators_found": [],
+                "negative_signals": ["irrelevant_url"],
+                "matched_sections": [],
+                "classification_reason": "URL path matches excluded system/legal/auth pattern",
                 "rejection_reasons": ["URL path matches excluded system/legal/auth pattern"],
             }
 
-        # 2. Check Service Pitch & Service Page patterns
-        service_url_match = any(re.search(pat, path) for pat in self.SERVICE_URL_PATTERNS)
-        service_pitch_count = sum(1 for p in self.SERVICE_PITCH_PHRASES if p in sample_text)
-        service_heading_match = any(term in combined_headings for term in ["our services", "services", "pricing", "packages", "what we offer"])
+        # 2. DOM-level signals if raw HTML is provided
+        dom_portfolio_cards_count = 0
+        has_dom_grid = False
+        if raw_html:
+            try:
+                soup = BeautifulSoup(raw_html[:60000], "html.parser")
+                card_selectors = [
+                    ".client-card", ".portfolio-card", ".project-card", ".project-item",
+                    ".case-study-card", ".portfolio-item", ".client-item", ".client-logo-wrap",
+                ]
+                dom_portfolio_cards_count = len(soup.select(", ".join(card_selectors)))
+                grid_selectors = [
+                    ".clients-grid", ".portfolio-grid", ".projects-grid", ".portfolio-list",
+                ]
+                has_dom_grid = bool(soup.select(", ".join(grid_selectors)))
+            except Exception:
+                pass
 
-        # 3. Check Article / Blog patterns
-        article_url_match = any(re.search(pat, path) for pat in self.ARTICLE_URL_PATTERNS)
-        article_schema = any("article" in s or "blogposting" in s or "newsarticle" in s for s in schema_set)
+        if dom_portfolio_cards_count > 0:
+            indicators_found.append(f"dom_portfolio_cards_{dom_portfolio_cards_count}")
+        if has_dom_grid:
+            indicators_found.append("dom_portfolio_grid")
 
-        # 4. Check About / Team patterns
-        about_url_match = any(re.search(pat, path) for pat in self.ABOUT_URL_PATTERNS)
-        about_heading_match = any(term in combined_headings for term in ["about us", "our team", "meet the team", "leadership", "our story"])
-
-        # 5. Check Client Evidence signals (Case study, Testimonial, Portfolio, etc.)
+        # 3. Signals detection
         case_study_url = any(re.search(pat, path) for pat in self.CASE_STUDY_URL_PATTERNS)
         case_study_heading = any(term in combined_headings for term in self.CASE_STUDY_HEADINGS)
         has_challenge_solution = ("challenge" in sample_text and "solution" in sample_text and "results" in sample_text)
@@ -142,7 +169,29 @@ class TextExtractor:
         profile_url = any(re.search(pat, path) for pat in self.CLIENT_PROFILE_URL_PATTERNS)
         profile_heading = any(term in combined_headings for term in self.CLIENT_PROFILE_HEADINGS)
 
-        # Calculate evidence scoring
+        service_url_match = any(re.search(pat, path) for pat in self.SERVICE_URL_PATTERNS)
+        service_pitch_count = sum(1 for p in self.SERVICE_PITCH_PHRASES if p in sample_text)
+        service_heading_match = any(term in combined_headings for term in ["our services", "services we offer", "what we offer", "pricing plans"])
+
+        article_url_match = any(re.search(pat, path) for pat in self.ARTICLE_URL_PATTERNS)
+        article_schema = any("article" in s or "blogposting" in s or "newsarticle" in s for s in schema_set)
+
+        about_url_match = any(re.search(pat, path) for pat in self.ABOUT_URL_PATTERNS)
+        about_heading_match = any(term in combined_headings for term in ["about us", "our team", "meet the team", "leadership", "our story"])
+
+        # Record matched sections
+        if portfolio_url or portfolio_heading or dom_portfolio_cards_count > 0:
+            matched_sections.append("Portfolio Section")
+        if case_study_url or case_study_heading:
+            matched_sections.append("Case Studies Section")
+        if testimonial_url or testimonial_heading or has_review_schema:
+            matched_sections.append("Testimonials Section")
+        if service_url_match or service_heading_match or service_pitch_count > 0:
+            matched_sections.append("Services Section")
+        if about_url_match or about_heading_match:
+            matched_sections.append("About Section")
+
+        # Base Evidence Scoring
         evidence_score = 0
         if case_study_url:
             evidence_score += 45
@@ -165,11 +214,14 @@ class TextExtractor:
             indicators_found.append("review_schema_markup")
 
         if portfolio_url:
-            evidence_score += 40
+            evidence_score += 50
             indicators_found.append("portfolio_url")
         if portfolio_heading:
-            evidence_score += 30
+            evidence_score += 40
             indicators_found.append("portfolio_heading")
+        if dom_portfolio_cards_count >= 2:
+            evidence_score += 40
+            indicators_found.append(f"dom_cards_{dom_portfolio_cards_count}")
 
         if customer_story_url:
             evidence_score += 40
@@ -179,49 +231,66 @@ class TextExtractor:
             indicators_found.append("customer_story_heading")
 
         if profile_url:
-            evidence_score += 35
+            evidence_score += 40
             indicators_found.append("client_profile_url")
         if profile_heading:
-            evidence_score += 30
+            evidence_score += 35
             indicators_found.append("client_profile_heading")
 
-        # Penalize if page is primarily a service pitch or marketing article
+        # Explicit client page signals prevent generic service disqualification
+        has_direct_portfolio_evidence = bool(
+            portfolio_url
+            or portfolio_heading
+            or dom_portfolio_cards_count >= 2
+            or case_study_url
+            or case_study_heading
+            or testimonial_url
+            or testimonial_heading
+            or customer_story_url
+            or customer_story_heading
+            or profile_url
+            or profile_heading
+        )
+
         penalty = 0
-        if service_url_match:
-            penalty += 40
-            negative_signals.append("service_url")
-        if service_heading_match:
-            penalty += 25
-            negative_signals.append("service_heading")
-        if service_pitch_count >= 2:
-            penalty += 30
-            negative_signals.append(f"service_pitch_phrases_found_{service_pitch_count}")
+        if not has_direct_portfolio_evidence:
+            if service_url_match:
+                penalty += 40
+                negative_signals.append("service_url")
+            if service_heading_match:
+                penalty += 25
+                negative_signals.append("service_heading")
+            if service_pitch_count >= 2:
+                penalty += 30
+                negative_signals.append(f"service_pitch_phrases_{service_pitch_count}")
+            if article_url_match:
+                penalty += 40
+                negative_signals.append("article_url")
+            if article_schema:
+                penalty += 25
+                negative_signals.append("article_schema")
+            if about_url_match:
+                penalty += 40
+                negative_signals.append("about_url")
+            if about_heading_match:
+                penalty += 25
+                negative_signals.append("about_heading")
+        else:
+            if service_pitch_count >= 3 and not portfolio_url:
+                penalty = 15
+                negative_signals.append("service_content_present")
 
-        if article_url_match:
-            penalty += 40
-            negative_signals.append("article_url")
-        if article_schema:
-            penalty += 25
-            negative_signals.append("article_schema")
+        final_score = max(0, min(100, evidence_score - penalty))
 
-        if about_url_match:
-            penalty += 40
-            negative_signals.append("about_url")
-        if about_heading_match:
-            penalty += 25
-            negative_signals.append("about_heading")
-
-        # Determine Category
-        final_score = max(0, min(100, evidence_score - (penalty if evidence_score < 70 else penalty // 2)))
-
-        if case_study_url or (case_study_heading and evidence_score >= 40):
+        # Categorization hierarchy
+        if case_study_url or (case_study_heading and evidence_score >= 35):
             category = "Case Study"
-        elif testimonial_url or (testimonial_heading and evidence_score >= 40) or has_review_schema:
+        elif testimonial_url or (testimonial_heading and evidence_score >= 35 and not portfolio_url) or has_review_schema:
             category = "Testimonial"
+        elif portfolio_url or (portfolio_heading and (evidence_score >= 35 or dom_portfolio_cards_count > 0)) or dom_portfolio_cards_count >= 2:
+            category = "Client Portfolio"
         elif customer_story_url or customer_story_heading:
             category = "Customer Story"
-        elif portfolio_url or (portfolio_heading and evidence_score >= 35):
-            category = "Client Portfolio"
         elif profile_url or profile_heading:
             category = "Published Client Profile"
         elif service_url_match or service_heading_match or service_pitch_count >= 2:
@@ -235,11 +304,10 @@ class TextExtractor:
         else:
             category = "Irrelevant"
 
-        # Determine if this page should be processed for client references
         valid_client_categories = {
             "Case Study", "Client Portfolio", "Testimonial", "Customer Story", "Published Client Profile"
         }
-        is_client_page = (category in valid_client_categories) and (final_score >= 35)
+        is_client_page = (category in valid_client_categories) and (final_score >= 30)
 
         reasons = []
         if not is_client_page:
@@ -248,12 +316,19 @@ class TextExtractor:
             else:
                 reasons.append("Insufficient client evidence signals (score below threshold)")
 
+        classification_reason = (
+            f"Classified as {category} with score {final_score} based on: {', '.join(indicators_found or ['heuristics'])}"
+        )
+
         return {
+            "url": url,
             "is_client_reference_page": is_client_page,
             "relevance_score": final_score,
             "page_category": category,
             "indicators_found": indicators_found,
             "negative_signals": negative_signals,
+            "matched_sections": matched_sections,
+            "classification_reason": classification_reason,
             "rejection_reasons": reasons,
         }
 
@@ -273,6 +348,6 @@ class TextExtractor:
                     "source_url": url,
                     "is_generic": is_generic,
                     "verified": False,
-                    "attribution": "explicitly_published"
+                    "attribution": "explicitly_published",
                 })
         return valid
