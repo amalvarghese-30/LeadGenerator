@@ -1,12 +1,16 @@
 """
-Website Crawler Engine — Enhanced.
-- Fallback chain: HTTPX -> HTML extraction -> Playwright -> Selenium (optional).
-- Per-domain adaptive delay and concurrency control via rate_limit_service.
-- Retry logic with exponential backoff & jitter.
-- Canonical URL detection and duplicate content detection.
-- Graceful cancellation support between page requests.
-- Guaranteed browser cleanup on shutdown or cancellation.
-- SSRF and robots.txt compliance.
+Website Crawler Engine — High-Resilience Stealth Pipeline.
+- Multi-stage fallback chain:
+  1. Fast HTTPX with rotating stealth browser headers (Chrome/Edge 124+) & HTTP/2
+  2. Cloudflare / WAF challenge / 403 / 429 / Empty SPA detection
+  3. Stealth Headless Playwright (anti-detection flags, custom viewport, webdriver mask)
+  4. Selenium stealth fallback
+- Integrated Adaptive Rate Limiting:
+  * Dynamic jittered pacing (safe_delay + random.uniform(0.5, 2.5))
+  * Response header inspection (Retry-After, X-RateLimit-*, CF-Ray)
+  * Metric recording & automatic domain cooldown
+- Duplicate content & canonical URL handling
+- SSRF protection & safe cancellation support
 """
 import asyncio
 import hashlib
@@ -25,6 +29,7 @@ from app.discovery.robots import RobotsChecker
 from app.crawler.content_extractor import ContentExtractor
 from app.services.rate_limit_service import rate_limit_service
 from app.utils.job_logger import log_job_event
+from app.utils.http_client import get_stealth_headers, is_cloudflare_or_blocked
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +47,7 @@ class CrawlerManager:
         max_pages: int = 30,
         delay_seconds: float = 1.0,
         timeout: int = 25,
-        user_agent: str = "LeadIntel-Researcher/1.0 (+https://leadintel.io/bot)",
+        user_agent: Optional[str] = None,
         concurrency: int = 3,
         enable_playwright: bool = True,
         enable_selenium: bool = True,
@@ -126,14 +131,14 @@ class CrawlerManager:
             result["status"] = "skipped"
             return result
 
-        # Consult adaptive rate limit policy and enforce delays
+        # 3. Adaptive Rate Limit Consultation & Jittered Pacing
         try:
             policy = await rate_limit_service.get_domain_policy(url)
         except Exception as e:
             logger.warning("Failed to obtain rate policy for %s: %s", url, e)
-            policy = {"recommended_delay_seconds": 1.5, "is_in_cooldown": False}
+            policy = {"recommended_delay_seconds": 1.0, "is_in_cooldown": False}
 
-        # Check and enforce domain cooldown if active
+        # Domain cooldown check
         if policy.get("is_in_cooldown"):
             cooldown_until_str = policy.get("cooldown_until")
             if cooldown_until_str:
@@ -148,17 +153,16 @@ class CrawlerManager:
                 except Exception:
                     pass
 
-        # Enforce pre-request domain interval delay
-        effective_delay = max(self.delay_seconds, float(policy.get("recommended_delay_seconds") or 1.0))
-        await asyncio.sleep(effective_delay)
+        # Dynamic jittered delay
+        base_delay = max(self.delay_seconds, float(policy.get("recommended_delay_seconds") or 1.0))
+        jittered_delay = base_delay + random.uniform(0.3, 1.2)
+        await asyncio.sleep(jittered_delay)
 
-        headers = {
-            "User-Agent": self.user_agent,
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            "Accept-Language": "en-US,en;q=0.9",
-        }
+        # 4. HTTP Fetch with realistic browser headers & HTTP/2
+        headers = get_stealth_headers(url=url)
+        if self.user_agent:
+            headers["User-Agent"] = self.user_agent
 
-        # 3. HTTP Fetch with retry logic
         resp = None
         max_retries = 2
         last_exception = None
@@ -170,6 +174,7 @@ class CrawlerManager:
                     timeout=self.timeout,
                     follow_redirects=True,
                     headers=headers,
+                    http2=True,
                     limits=httpx.Limits(max_connections=10, max_keepalive_connections=5),
                 ) as client:
                     resp = await client.get(url)
@@ -183,16 +188,16 @@ class CrawlerManager:
                         headers=dict(resp.headers),
                     )
 
-                    # Handle 429 throttling with standard Retry-After parsing
+                    # Handle 429 throttling
                     if resp.status_code == 429 and attempt < max_retries:
                         from app.services.rate_limit_service import HeaderAnalyzer
-                        retry_after = 2
+                        retry_after = 3.0
                         header_val = resp.headers.get("retry-after") or resp.headers.get("Retry-After")
                         if header_val:
                             parsed_sec = HeaderAnalyzer.parse_retry_after(header_val)
                             if parsed_sec:
                                 retry_after = parsed_sec
-                        sleep_delay = min(retry_after + random.uniform(0.2, 0.6), 60.0)
+                        sleep_delay = min(retry_after + random.uniform(0.5, 1.5), 60.0)
                         logger.warning("HTTP 429 for %s. Backing off for %.1fs (attempt %d/%d)", url, sleep_delay, attempt + 1, max_retries)
                         await asyncio.sleep(sleep_delay)
                         continue
@@ -205,7 +210,7 @@ class CrawlerManager:
                 )
                 last_exception = e
                 if attempt < max_retries:
-                    await asyncio.sleep(1.0 * (attempt + 1) + random.uniform(0.1, 0.3))
+                    await asyncio.sleep(1.0 * (attempt + 1) + random.uniform(0.2, 0.5))
             except httpx.ConnectError as e:
                 t_elapsed_ms = (time.time() - t0) * 1000
                 await rate_limit_service.record_request_metric(
@@ -213,7 +218,7 @@ class CrawlerManager:
                 )
                 last_exception = e
                 if attempt < max_retries:
-                    await asyncio.sleep(1.5 * (attempt + 1) + random.uniform(0.1, 0.3))
+                    await asyncio.sleep(1.5 * (attempt + 1) + random.uniform(0.2, 0.5))
             except httpx.HTTPError as e:
                 t_elapsed_ms = (time.time() - t0) * 1000
                 await rate_limit_service.record_request_metric(
@@ -225,148 +230,171 @@ class CrawlerManager:
                 last_exception = e
                 break
 
+        # Check if HTTP request was completely blocked, failed, or Cloudflare challenge was returned
+        needs_browser_fallback = False
+        blocked_reason = ""
+
         if resp is None:
-            if isinstance(last_exception, httpx.TimeoutException):
-                result["error"] = "timeout"
-                result["error_type"] = "timeout"
-            else:
-                result["error"] = f"request_error: {str(last_exception)[:200]}"
-                result["error_type"] = "request"
-            return result
+            needs_browser_fallback = True
+            blocked_reason = "http_connection_failed"
+        else:
+            is_blocked, reason = is_cloudflare_or_blocked(resp.status_code, resp.text)
+            if is_blocked:
+                needs_browser_fallback = True
+                blocked_reason = reason
 
-        final_url = str(resp.url)
-        safe_dest, dest_reason = is_safe_url(final_url)
-        if not safe_dest:
-            result["error"] = f"redirect_ssrf: {dest_reason}"
-            result["error_type"] = "ssrf_redirect"
-            result["status"] = "skipped"
-            return result
+        # If HTTP passed cleanly, do standard extraction first
+        content = None
+        final_url = str(resp.url) if resp else url
+        if not needs_browser_fallback and resp and resp.status_code == 200:
+            safe_dest, dest_reason = is_safe_url(final_url)
+            if not safe_dest:
+                result["error"] = f"redirect_ssrf: {dest_reason}"
+                result["error_type"] = "ssrf_redirect"
+                result["status"] = "skipped"
+                return result
 
-        result["http_status"] = resp.status_code
-        content_type = resp.headers.get("content-type", "").lower()
+            result["http_status"] = resp.status_code
+            content_type = resp.headers.get("content-type", "").lower()
 
-        if any(t in content_type for t in SKIP_CONTENT_TYPES):
-            result["error"] = f"unsupported_content_type: {content_type}"
-            result["error_type"] = "content_type"
-            result["status"] = "skipped"
-            return result
+            if any(t in content_type for t in SKIP_CONTENT_TYPES):
+                result["error"] = f"unsupported_content_type: {content_type}"
+                result["error_type"] = "content_type"
+                result["status"] = "skipped"
+                return result
 
-        if resp.status_code != 200:
-            result["error"] = f"http_status_{resp.status_code}"
-            result["error_type"] = f"http_{resp.status_code}"
-            return result
+            # Canonical URL detection
+            try:
+                soup = BeautifulSoup(resp.text[:50000], "lxml")
+                canon_tag = soup.find("link", rel=lambda val: val and "canonical" in val.lower())
+                if canon_tag and canon_tag.get("href"):
+                    result["canonical_url"] = urljoin(final_url, canon_tag["href"].strip())
+            except Exception:
+                pass
 
-        if "text/html" not in content_type and "xml" not in content_type:
-            result["error"] = f"non_html: {content_type}"
-            result["error_type"] = "content_type"
-            result["status"] = "skipped"
-            return result
+            # Extract content
+            try:
+                content = self.extractor.extract(resp.text, final_url)
+            except Exception as e:
+                logger.debug("Extraction error on %s: %s", url, e)
 
-        # Canonical URL detection
-        canonical_url = None
-        try:
-            soup = BeautifulSoup(resp.text[:50000], "lxml")
-            canon_tag = soup.find("link", rel=lambda val: val and "canonical" in val.lower())
-            if canon_tag and canon_tag.get("href"):
-                canonical_url = urljoin(final_url, canon_tag["href"].strip())
-                result["canonical_url"] = canonical_url
-        except Exception:
-            pass
+        # Evaluate if browser fallback (Playwright / Selenium) is needed
+        current_word_count = int(content.get("word_count", 0)) if content else 0
+        if needs_browser_fallback or current_word_count < MIN_WORDS_FOR_JS_FALLBACK:
+            rendered = None
+            render_method = None
 
-        # 4. Normal HTML Extraction
-        try:
-            content = self.extractor.extract(resp.text, final_url)
-        except Exception as e:
-            result["error"] = f"extract_error: {str(e)[:200]}"
-            result["error_type"] = "extract"
-            return result
+            if self.enable_playwright:
+                rendered = await self._playwright_render(url)
+                if rendered and rendered.get("word_count", 0) > current_word_count:
+                    render_method = "playwright"
 
-        word_count = int(content.get("word_count", 0))
-        main_text = content.get("main_text", "")
+            if (not rendered or rendered.get("word_count", 0) <= current_word_count) and self.enable_selenium:
+                sel_rendered = await self._selenium_render(url)
+                if sel_rendered and sel_rendered.get("word_count", 0) > current_word_count:
+                    rendered = sel_rendered
+                    render_method = "selenium"
 
-        result.update({
-            "url": final_url,
-            "page_title": content.get("title", ""),
-            "h1": content.get("h1", ""),
-            "h2s": content.get("h2s", []),
-            "main_text": main_text,
-            "word_count": word_count,
-            "public_emails": content.get("public_emails", []),
-            "social_profiles": content.get("social_profiles", []),
-            "schema_persons": content.get("schema_persons", []),
-            "schema_organizations": content.get("schema_organizations", []),
-        })
+            if rendered and rendered.get("word_count", 0) > current_word_count:
+                result.update({
+                    "url": url,
+                    "http_status": 200,
+                    "page_title": rendered.get("title") or "",
+                    "h1": rendered.get("h1", ""),
+                    "h2s": rendered.get("h2s", []),
+                    "main_text": rendered["main_text"],
+                    "word_count": rendered["word_count"],
+                    "extraction_method": render_method,
+                    "javascript_rendered": True,
+                    "public_emails": rendered.get("public_emails", []),
+                    "public_phones": rendered.get("public_phones", []),
+                    "social_profiles": rendered.get("social_profiles", []),
+                    "schema_persons": rendered.get("schema_persons", []),
+                    "schema_organizations": rendered.get("schema_organizations", []),
+                    "status": "success",
+                    "error": None,
+                    "error_type": None,
+                })
+                # Duplicate content check
+                text_hash = hashlib.md5(rendered["main_text"].strip().lower().encode("utf-8")).hexdigest()
+                result["content_hash"] = text_hash
+                if text_hash in self._seen_content_hashes:
+                    result["is_duplicate_content"] = True
+                else:
+                    self._seen_content_hashes.add(text_hash)
+                return result
 
-        # 5. Playwright fallback if content is thin
-        rendered = None
-        render_method = None
-        if word_count < MIN_WORDS_FOR_JS_FALLBACK and self.enable_playwright:
-            rendered = await self._playwright_render(final_url)
-            if rendered and rendered.get("word_count", 0) > word_count:
-                render_method = "playwright"
-
-        # 6. Optional Selenium fallback if Playwright fails or is disabled/unavailable
-        if (not rendered or rendered.get("word_count", 0) <= word_count) and word_count < MIN_WORDS_FOR_JS_FALLBACK and self.enable_selenium:
-            sel_rendered = await self._selenium_render(final_url)
-            if sel_rendered and sel_rendered.get("word_count", 0) > word_count:
-                rendered = sel_rendered
-                render_method = "selenium"
-
-        if rendered and rendered.get("word_count", 0) > word_count:
-            # Merge contacts and socials discovered in rendered DOM
-            merged_emails = list(dict.fromkeys(result.get("public_emails", []) + rendered.get("public_emails", [])))
-            merged_phones = list(dict.fromkeys(result.get("public_phones", []) + rendered.get("public_phones", [])))
-
-            seen_soc_urls = {sp.get("url") for sp in result.get("social_profiles", []) if sp.get("url")}
-            merged_socials = list(result.get("social_profiles", []))
-            for sp in rendered.get("social_profiles", []):
-                if sp.get("url") and sp["url"] not in seen_soc_urls:
-                    seen_soc_urls.add(sp["url"])
-                    merged_socials.append(sp)
-
+        # If HTTP extraction succeeded and no browser fallback needed or fallback was not better
+        if content:
+            main_text = content.get("main_text", "")
+            word_count = int(content.get("word_count", 0))
             result.update({
-                "main_text": rendered["main_text"],
-                "word_count": rendered["word_count"],
-                "extraction_method": render_method,
-                "javascript_rendered": True,
-                "page_title": rendered.get("title") or result["page_title"],
-                "h1": rendered.get("h1") or result.get("h1", ""),
-                "h2s": rendered.get("h2s") or result.get("h2s", []),
-                "public_emails": merged_emails,
-                "public_phones": merged_phones,
-                "social_profiles": merged_socials,
-                "schema_persons": result.get("schema_persons", []) + rendered.get("schema_persons", []),
-                "schema_organizations": result.get("schema_organizations", []) + rendered.get("schema_organizations", []),
+                "url": final_url,
+                "http_status": resp.status_code if resp else 200,
+                "page_title": content.get("title", ""),
+                "h1": content.get("h1", ""),
+                "h2s": content.get("h2s", []),
+                "main_text": main_text,
+                "word_count": word_count,
+                "public_emails": content.get("public_emails", []),
+                "public_phones": content.get("public_phones", []),
+                "social_profiles": content.get("social_profiles", []),
+                "schema_persons": content.get("schema_persons", []),
+                "schema_organizations": content.get("schema_organizations", []),
+                "status": "success",
             })
-            word_count = rendered["word_count"]
-            main_text = rendered["main_text"]
+            if main_text:
+                text_hash = hashlib.md5(main_text.strip().lower().encode("utf-8")).hexdigest()
+                result["content_hash"] = text_hash
+                if text_hash in self._seen_content_hashes:
+                    result["is_duplicate_content"] = True
+                else:
+                    self._seen_content_hashes.add(text_hash)
+            return result
 
-        # Duplicate content check
-        if main_text:
-            text_hash = hashlib.md5(main_text.strip().lower().encode("utf-8")).hexdigest()
-            result["content_hash"] = text_hash
-            if text_hash in self._seen_content_hashes:
-                result["is_duplicate_content"] = True
-            else:
-                self._seen_content_hashes.add(text_hash)
-
-        result["status"] = "success"
+        # Both HTTP and browser fallback failed
+        if resp is not None:
+            result["http_status"] = resp.status_code
+            result["error"] = f"blocked_or_empty: {blocked_reason or resp.status_code}"
+            result["error_type"] = f"http_{resp.status_code}"
+        else:
+            result["error"] = f"request_error: {str(last_exception)[:200]}"
+            result["error_type"] = "network_error"
         return result
 
     async def _playwright_render(self, url: str) -> Optional[Dict]:
-        """Render using Playwright."""
+        """Render using Playwright with anti-detection flags and stealth viewport."""
         try:
             from playwright.async_api import async_playwright
             if self._playwright is None:
                 self._playwright = await async_playwright().start()
                 self._playwright_browser = await self._playwright.chromium.launch(
                     headless=True,
-                    args=["--no-sandbox", "--disable-dev-shm-usage"],
+                    args=[
+                        "--no-sandbox",
+                        "--disable-dev-shm-usage",
+                        "--disable-blink-features=AutomationControlled",
+                        "--disable-gpu",
+                    ],
                 )
-            page = await self._playwright_browser.new_page(user_agent=self.user_agent)
+
+            headers = get_stealth_headers(url=url)
+            page = await self._playwright_browser.new_page(
+                user_agent=self.user_agent or headers["User-Agent"],
+                viewport={"width": 1920, "height": 1080},
+                extra_http_headers={"Accept-Language": "en-US,en;q=0.9"},
+            )
+
+            # Mask navigator.webdriver
+            await page.add_init_script("""
+                Object.defineProperty(navigator, 'webdriver', {
+                    get: () => undefined
+                });
+            """)
+
             try:
-                await page.goto(url, timeout=15000, wait_until="domcontentloaded")
-                await page.wait_for_timeout(1000)
+                await page.goto(url, timeout=20000, wait_until="domcontentloaded")
+                await page.wait_for_timeout(1500)
                 html = await page.content()
                 title = await page.title()
             finally:
@@ -386,7 +414,7 @@ class CrawlerManager:
                 "schema_organizations": content.get("schema_organizations", []),
             }
         except Exception as e:
-            logger.debug("Playwright render unavailable/failed for %s: %s", url, e)
+            logger.debug("Playwright render failed for %s: %s", url, e)
             return None
 
     async def _selenium_render(self, url: str) -> Optional[Dict]:
@@ -395,17 +423,22 @@ class CrawlerManager:
             from selenium import webdriver
             from selenium.webdriver.chrome.options import Options
 
+            headers = get_stealth_headers(url=url)
+            ua = self.user_agent or headers["User-Agent"]
+
             def _sync_fetch():
                 opts = Options()
                 opts.add_argument("--headless=new")
                 opts.add_argument("--no-sandbox")
                 opts.add_argument("--disable-dev-shm-usage")
-                opts.add_argument(f"user-agent={self.user_agent}")
+                opts.add_argument("--disable-blink-features=AutomationControlled")
+                opts.add_argument(f"user-agent={ua}")
+                opts.add_argument("--window-size=1920,1080")
                 driver = webdriver.Chrome(options=opts)
                 try:
-                    driver.set_page_load_timeout(15)
+                    driver.set_page_load_timeout(20)
                     driver.get(url)
-                    time.sleep(1)
+                    time.sleep(1.5)
                     source = driver.page_source
                     title = driver.title
                     return source, title
@@ -428,7 +461,7 @@ class CrawlerManager:
                 "schema_organizations": content.get("schema_organizations", []),
             }
         except Exception as e:
-            logger.debug("Selenium render unavailable/failed for %s: %s", url, e)
+            logger.debug("Selenium render failed for %s: %s", url, e)
             return None
 
     # ------------------------------------------------------------------
@@ -439,79 +472,62 @@ class CrawlerManager:
         urls: List[str],
         job_id: Optional[str] = None,
         db: Optional[Any] = None,
+        cancellation_check: Optional[Callable[[], Awaitable[bool]]] = None,
         is_cancelled_fn: Optional[Callable[[], Awaitable[bool]]] = None,
-        max_pages: Optional[int] = None,
+        progress_callback: Optional[Callable[[int, int], Awaitable[None]]] = None,
     ) -> List[Dict[str, Any]]:
-        """
-        Crawl URLs sequentially / bounded concurrency, respecting per-domain rate limits
-        and actively verifying cancellation between each page fetch.
-        """
-        limit = max_pages or self.max_pages
-        urls = urls[:limit]
-        total = len(urls)
         results: List[Dict[str, Any]] = []
-        counters = {"attempted": 0, "crawled": 0, "failed": 0, "skipped": 0}
+        urls_to_crawl = urls[:self.max_pages]
+        total = len(urls_to_crawl)
+        cancel_check = is_cancelled_fn or cancellation_check
 
-        if db is not None:
-            rate_limit_service.db = db
+        for index, target_url in enumerate(urls_to_crawl):
+            if cancel_check:
+                try:
+                    if await cancel_check():
+                        logger.info("Cancellation detected before crawling %s", target_url)
+                        break
+                except Exception as ex:
+                    logger.warning("Error checking cancellation: %s", ex)
 
-        try:
-            for idx, url in enumerate(urls):
-                # 1. Check for job cancellation
-                if is_cancelled_fn and await is_cancelled_fn():
-                    logger.info("CrawlerManager: Job %s cancelled during page crawl. Halting.", job_id)
-                    break
+            if db is not None and job_id:
+                await log_job_event(
+                    db, job_id, "crawling", "info", "page_crawl_started",
+                    f"Fetching page {index + 1}/{total}: {target_url}",
+                    url=target_url,
+                    metadata={"page_index": index + 1, "total_pages": total}
+                )
 
-                res = await self.crawl_url(url)
-                results.append(res)
+            page_res = await self.crawl_url(target_url)
+            results.append(page_res)
 
-                counters["attempted"] += 1
-                if res["status"] == "success":
-                    counters["crawled"] += 1
-                    if db is not None and job_id is not None:
-                        await log_job_event(
-                            db, job_id, "crawling", "info", "crawl_page_success",
-                            f"Crawled {url} ({res['word_count']} words, method={res['extraction_method']})",
-                            url=url
-                        )
-                elif res["status"] == "skipped":
-                    counters["skipped"] += 1
-                else:
-                    counters["failed"] += 1
-                    if db is not None and job_id is not None:
-                        await log_job_event(
-                            db, job_id, "crawling", "warning", "crawl_page_failed",
-                            f"Failed {url}: {res['error']}",
-                            url=url
-                        )
+            if db is not None and job_id:
+                st = page_res.get("status")
+                met = page_res.get("extraction_method", "httpx")
+                wc = page_res.get("word_count", 0)
+                lvl = "success" if st == "success" else "warning"
+                msg = (
+                    f"Page {index + 1}/{total} fetched via {met} ({wc} words)"
+                    if st == "success"
+                    else f"Page {index + 1}/{total} {st}: {page_res.get('error')}"
+                )
+                await log_job_event(
+                    db, job_id, "crawling", lvl,
+                    "page_crawl_completed" if st == "success" else "page_crawl_failed",
+                    msg,
+                    url=target_url,
+                    metadata={
+                        "page_index": index + 1,
+                        "method": met,
+                        "words": wc,
+                        "emails_count": len(page_res.get("public_emails", [])),
+                    }
+                )
 
-                # Update job progress in DB
-                if db is not None and job_id is not None:
-                    progress = int(((idx + 1) / max(total, 1)) * 35) + 25
-                    try:
-                        await db.crawl_jobs.update_one(
-                            {"_id": ObjectId(job_id)},
-                            {
-                                "$set": {
-                                    "pages_attempted": counters["attempted"],
-                                    "pages_crawled": counters["crawled"],
-                                    "pages_failed": counters["failed"],
-                                    "pages_skipped": counters["skipped"],
-                                    "progress_pct": min(progress, 60),
-                                    "current_stage": "crawling",
-                                    "updated_at": datetime.now(timezone.utc),
-                                }
-                            },
-                        )
-                    except Exception as e:
-                        logger.debug("progress update failed: %s", e)
-
-                # Delay between requests
-                policy = await rate_limit_service.get_domain_policy(url)
-                sleep_sec = max(self.delay_seconds, policy.get("recommended_delay_seconds", 1.0))
-                await asyncio.sleep(sleep_sec)
-
-        finally:
-            await self.cleanup()
+            if progress_callback:
+                try:
+                    await progress_callback(index + 1, total)
+                except Exception as ex:
+                    logger.debug("Progress callback failed: %s", ex)
 
         return results

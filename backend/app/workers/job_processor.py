@@ -25,6 +25,7 @@ from app.crm.company_service import CompanyService
 from app.crm.lead_service import LeadService
 from app.enrichment.contact_enrichment_service import ContactEnrichmentService
 from app.utils.job_logger import log_job_event
+from app.utils.url_utils import extract_domain
 
 logging.basicConfig(
     level=logging.INFO,
@@ -326,6 +327,19 @@ class JobProcessor:
         discovered_person_profiles: List[Dict[str, Any]] = []
         page_diagnostics: List[Dict[str, Any]] = []
 
+        competitor_domain = None
+        competitor_brand = None
+        if provider_id:
+            try:
+                prov_doc = await db.providers.find_one({"_id": ObjectId(provider_id)})
+                if prov_doc:
+                    competitor_domain = prov_doc.get("domain") or extract_domain(prov_doc.get("website", ""))
+                    competitor_brand = prov_doc.get("name")
+            except Exception:
+                pass
+        if not competitor_domain and start_url:
+            competitor_domain = extract_domain(start_url)
+
         for page in crawled_pages:
             # Check cancellation between page extractions
             if await self.is_job_cancelled(db, job_id):
@@ -364,7 +378,9 @@ class JobProcessor:
                 logger.warning("[PERSON_EXTRACTION] error for %s: %s", page_url, pe_err)
 
             try:
-                refs, rejected, page_meta = await self.client_classifier.process_page_detailed(page, provider_id)
+                refs, rejected, page_meta = await self.client_classifier.process_page_detailed(
+                    page, provider_id, competitor_domain=competitor_domain, competitor_brand=competitor_brand
+                )
             except Exception as e:
                 logger.exception("[EXTRACTION] error for %s", page.get("url"))
                 warnings.append(_err("extraction", str(e), url=page.get("url"), err_type="extract"))
@@ -472,6 +488,10 @@ class JobProcessor:
                                 prof_urls[plat] = soc["url"]
 
                         page_emails = page.get("public_emails", [])
+                        if competitor_domain:
+                            clean_cd = competitor_domain.lower().replace("www.", "")
+                            page_emails = [e for e in page_emails if "@" in e and clean_cd not in e.split("@")[1].lower()]
+
                         page_phones = page.get("public_phones", [])
                         source_url = page.get("url") or ref.get("source_url") or ""
 

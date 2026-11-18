@@ -1,4 +1,4 @@
-"""Multi-format sitemap parser with recursive index support."""
+"""Multi-format sitemap parser with recursive index support and stealth headers."""
 import httpx
 import xml.etree.ElementTree as ET
 import gzip
@@ -8,6 +8,8 @@ import logging
 from datetime import datetime
 from urllib.parse import urljoin, urlparse
 
+from app.utils.http_client import get_stealth_headers
+
 logger = logging.getLogger(__name__)
 
 SITEMAP_PATHS = [
@@ -15,9 +17,14 @@ SITEMAP_PATHS = [
     "/sitemap_index.xml",
     "/sitemap-index.xml",
     "/wp-sitemap.xml",
+    "/post-sitemap.xml",
+    "/portfolio-sitemap.xml",
+    "/case-studies-sitemap.xml",
+    "/projects-sitemap.xml",
+    "/clients-sitemap.xml",
+    "/page-sitemap.xml",
     "/sitemap.xml.gz",
     "/news-sitemap.xml",
-    "/page-sitemap.xml",
 ]
 
 # XML namespaces used in sitemaps
@@ -75,8 +82,9 @@ class SitemapParser:
         self._visited_sitemaps.add(url)
 
         try:
-            async with httpx.AsyncClient(timeout=self.timeout, follow_redirects=True) as client:
-                resp = await client.get(url, headers={"User-Agent": "LeadIntel-Researcher/1.0"})
+            headers = get_stealth_headers(url=url)
+            async with httpx.AsyncClient(timeout=self.timeout, follow_redirects=True, http2=True) as client:
+                resp = await client.get(url, headers=headers)
 
             if resp.status_code != 200:
                 logger.debug(f"Sitemap {url} returned HTTP {resp.status_code}")
@@ -118,68 +126,69 @@ class SitemapParser:
             return []
 
     def _parse_xml(self, content: bytes) -> List[Dict]:
-        """Parse XML sitemap content, handling indexes and URL sets."""
+        """Parse raw XML into list of items or index entries."""
+        items = []
         try:
             root = ET.fromstring(content)
-        except ET.ParseError as e:
-            logger.debug(f"XML parse error: {e}")
-            return []
+        except ET.ParseError:
+            # Try stripping whitespace/BOM and re-parsing
+            try:
+                cleaned = content.strip().lstrip(b"\xef\xbb\xbf")
+                root = ET.fromstring(cleaned)
+            except Exception:
+                return []
 
-        # Strip namespace for tag comparison
-        tag = root.tag.split("}")[-1] if "}" in root.tag else root.tag
-        items = []
+        tag = root.tag.lower()
 
-        if tag == "sitemapindex":
-            # Sitemap index — each child is a <sitemap> pointing to another sitemap
-            for sitemap_el in root:
-                child_tag = sitemap_el.tag.split("}")[-1] if "}" in sitemap_el.tag else sitemap_el.tag
-                if child_tag == "sitemap":
-                    loc_el = sitemap_el.find("{http://www.sitemaps.org/schemas/sitemap/0.9}loc")
-                    if loc_el is None:
-                        loc_el = sitemap_el.find("loc")
-                    if loc_el is not None and loc_el.text:
-                        items.append({
-                            "url": loc_el.text.strip(),
-                            "source": "sitemap_index",
-                            "_is_index": True,
-                        })
+        # Check for sitemapindex
+        if "sitemapindex" in tag:
+            for sm in root.findall("sm:sitemap", NS) or root.findall("{http://www.sitemaps.org/schemas/sitemap/0.9}sitemap") or root.findall("sitemap"):
+                loc = sm.findtext("sm:loc", default="", namespaces=NS) or sm.findtext("{http://www.sitemaps.org/schemas/sitemap/0.9}loc") or sm.findtext("loc")
+                if loc:
+                    items.append({"url": loc.strip(), "source": "sitemap_index", "_is_index": True})
+            return items
 
-        elif tag == "urlset":
-            # Regular URL set
-            for url_el in root:
-                child_tag = url_el.tag.split("}")[-1] if "}" in url_el.tag else url_el.tag
-                if child_tag != "url":
-                    continue
+        # Standard urlset
+        for url_elem in root.findall("sm:url", NS) or root.findall("{http://www.sitemaps.org/schemas/sitemap/0.9}url") or root.findall("url"):
+            loc = (
+                url_elem.findtext("sm:loc", default="", namespaces=NS)
+                or url_elem.findtext("{http://www.sitemaps.org/schemas/sitemap/0.9}loc")
+                or url_elem.findtext("loc")
+            )
+            if not loc:
+                continue
 
-                loc_el = url_el.find("{http://www.sitemaps.org/schemas/sitemap/0.9}loc")
-                if loc_el is None:
-                    loc_el = url_el.find("loc")
-                if loc_el is None or not loc_el.text:
-                    continue
+            lastmod = (
+                url_elem.findtext("sm:lastmod", default="", namespaces=NS)
+                or url_elem.findtext("{http://www.sitemaps.org/schemas/sitemap/0.9}lastmod")
+                or url_elem.findtext("lastmod")
+            )
+            changefreq = (
+                url_elem.findtext("sm:changefreq", default="", namespaces=NS)
+                or url_elem.findtext("{http://www.sitemaps.org/schemas/sitemap/0.9}changefreq")
+                or url_elem.findtext("changefreq")
+            )
+            priority_str = (
+                url_elem.findtext("sm:priority", default="", namespaces=NS)
+                or url_elem.findtext("{http://www.sitemaps.org/schemas/sitemap/0.9}priority")
+                or url_elem.findtext("priority")
+            )
 
-                lastmod_el = url_el.find("{http://www.sitemaps.org/schemas/sitemap/0.9}lastmod")
-                if lastmod_el is None:
-                    lastmod_el = url_el.find("lastmod")
+            try:
+                priority = float(priority_str) if priority_str else 0.5
+            except ValueError:
+                priority = 0.5
 
-                changefreq_el = url_el.find("{http://www.sitemaps.org/schemas/sitemap/0.9}changefreq")
-                if changefreq_el is None:
-                    changefreq_el = url_el.find("changefreq")
-
-                priority_el = url_el.find("{http://www.sitemaps.org/schemas/sitemap/0.9}priority")
-                if priority_el is None:
-                    priority_el = url_el.find("priority")
-
-                items.append({
-                    "url": loc_el.text.strip(),
-                    "source": "sitemap",
-                    "lastmod": lastmod_el.text.strip() if lastmod_el is not None and lastmod_el.text else None,
-                    "changefreq": changefreq_el.text.strip() if changefreq_el is not None and changefreq_el.text else None,
-                    "priority": float(priority_el.text.strip()) if priority_el is not None and priority_el.text else None,
-                })
+            items.append({
+                "url": loc.strip(),
+                "source": "sitemap",
+                "lastmod": lastmod.strip() if lastmod else None,
+                "changefreq": changefreq.strip() if changefreq else None,
+                "priority": priority,
+            })
 
         return items
 
-    def _decompress_gz(self, content: bytes) -> bytes:
-        """Decompress gzip content."""
-        with gzip.GzipFile(fileobj=io.BytesIO(content)) as f:
-            return f.read()
+    def _decompress_gz(self, data: bytes) -> bytes:
+        with gzip.GzipFile(fileobj=io.BytesIO(data)) as gz:
+            return gz.read()

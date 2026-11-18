@@ -15,7 +15,34 @@ export interface SearchProviderResponse {
   results: SearchProviderResult[];
 }
 
+export interface ScanResultContact {
+  email?: string | null;
+  phone?: string | null;
+  linkedin?: string | null;
+  channels?: any[];
+}
 
+export interface ScanResultItem {
+  id: string;
+  company_name?: string | null;
+  company_website?: string | null;
+  industry?: string | null;
+  person_name?: string | null;
+  designation?: string | null;
+  relationship_type: string;
+  confidence: number;
+  evidence_quote?: string | null;
+  source_url?: string | null;
+  verification_status: string;
+  contacts: ScanResultContact;
+}
+
+export interface JobResultsResponse {
+  job_id: string;
+  status: string;
+  total_results: number;
+  results: ScanResultItem[];
+}
 
 export const searchProviders = async (query: string, country_filter?: string): Promise<SearchProviderResponse> => {
   const res = await api.post<SearchProviderResponse>('/discovery/providers', {
@@ -38,6 +65,11 @@ export const getCrawlJob = async (id: string): Promise<CrawlJob> => {
 
 export const getJobReport = async (id: string): Promise<any> => {
   const res = await api.get(`/discovery/jobs/${id}/report`);
+  return res.data;
+};
+
+export const getJobResults = async (id: string): Promise<JobResultsResponse> => {
+  const res = await api.get<JobResultsResponse>(`/discovery/jobs/${id}/results`);
   return res.data;
 };
 

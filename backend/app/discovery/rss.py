@@ -1,10 +1,12 @@
-"""RSS and Atom feed discovery and parsing."""
+"""RSS and Atom feed discovery and parsing with stealth browser headers."""
 import httpx
 import feedparser
 from bs4 import BeautifulSoup
 from typing import List, Dict, Optional
 import logging
 from urllib.parse import urljoin
+
+from app.utils.http_client import get_stealth_headers
 
 logger = logging.getLogger(__name__)
 
@@ -43,18 +45,16 @@ class RSSDiscovery:
             except Exception as e:
                 logger.debug(f"HTML feed discovery failed: {e}")
 
-        # 2. If no feeds found in HTML, try common paths
+        # 2. If no feeds found in HTML, try common paths with stealth headers
         if not feeds:
-            async with httpx.AsyncClient(timeout=10, follow_redirects=True) as client:
+            headers = get_stealth_headers(url=base_url)
+            async with httpx.AsyncClient(timeout=10, follow_redirects=True, headers=headers, http2=True) as client:
                 for path in COMMON_FEED_PATHS:
                     url = base + path
                     if url in seen:
                         continue
                     try:
-                        resp = await client.head(
-                            url,
-                            headers={"User-Agent": "LeadIntel-Researcher/1.0"},
-                        )
+                        resp = await client.head(url)
                         if resp.status_code == 200:
                             content_type = resp.headers.get("content-type", "")
                             if any(t in content_type for t in ("xml", "rss", "atom", "json")):
@@ -66,11 +66,9 @@ class RSSDiscovery:
         # 3. Attempt homepage fetch if no HTML provided
         if not feeds and not homepage_html:
             try:
-                async with httpx.AsyncClient(timeout=10, follow_redirects=True) as client:
-                    resp = await client.get(
-                        base_url,
-                        headers={"User-Agent": "LeadIntel-Researcher/1.0"},
-                    )
+                headers = get_stealth_headers(url=base_url)
+                async with httpx.AsyncClient(timeout=10, follow_redirects=True, headers=headers, http2=True) as client:
+                    resp = await client.get(base_url)
                 if resp.status_code == 200 and "text/html" in resp.headers.get("content-type", ""):
                     soup = BeautifulSoup(resp.text, "lxml")
                     for link in soup.find_all("link", rel="alternate"):
@@ -87,75 +85,32 @@ class RSSDiscovery:
         return feeds
 
     async def parse_feed(self, feed_url: str) -> List[Dict]:
-        """
-        Parse a feed. Returns list of:
-        {url, title, published_at, author, description, source}
-        """
+        """Parse feed URL into list of: {url, source, published, title, description}"""
         try:
-            async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
-                resp = await client.get(
-                    feed_url,
-                    headers={"User-Agent": "LeadIntel-Researcher/1.0"},
-                )
+            headers = get_stealth_headers(url=feed_url)
+            async with httpx.AsyncClient(timeout=15, follow_redirects=True, headers=headers, http2=True) as client:
+                resp = await client.get(feed_url)
+
             if resp.status_code != 200:
                 return []
 
-            # feedparser works with string content
-            parsed = feedparser.parse(resp.text)
+            parsed = feedparser.parse(resp.content)
             items = []
             for entry in parsed.entries:
-                # Extract URL
-                url = entry.get("link") or entry.get("id", "")
-                if not url:
+                link = entry.get("link", "")
+                if not link:
                     continue
 
-                # Extract published date
-                published_at = None
-                if hasattr(entry, "published_parsed") and entry.published_parsed:
-                    from datetime import datetime
-                    try:
-                        published_at = datetime(*entry.published_parsed[:6]).isoformat()
-                    except Exception:
-                        pass
-                elif hasattr(entry, "updated_parsed") and entry.updated_parsed:
-                    from datetime import datetime
-                    try:
-                        published_at = datetime(*entry.updated_parsed[:6]).isoformat()
-                    except Exception:
-                        pass
-
-                # Extract author
-                author = ""
-                if hasattr(entry, "author"):
-                    author = entry.author
-                elif hasattr(entry, "authors") and entry.authors:
-                    author = entry.authors[0].get("name", "")
-
-                # Extract description/summary
-                description = ""
-                if hasattr(entry, "summary"):
-                    description = entry.summary
-                elif hasattr(entry, "description"):
-                    description = entry.description
-                # Strip HTML from description
-                if description:
-                    try:
-                        description = BeautifulSoup(description, "lxml").get_text(" ", strip=True)[:500]
-                    except Exception:
-                        description = description[:500]
-
                 items.append({
-                    "url": url,
-                    "title": entry.get("title", ""),
-                    "published_at": published_at,
-                    "author": author,
-                    "description": description,
+                    "url": link,
                     "source": "rss",
-                    "feed_url": feed_url,
+                    "title": entry.get("title", ""),
+                    "published": entry.get("published", "") or entry.get("updated", ""),
+                    "description": entry.get("summary", "")[:300] if entry.get("summary") else "",
+                    "priority": 60,
                 })
 
             return items
-
         except Exception as e:
             logger.debug(f"Failed to parse feed {feed_url}: {e}")
             return []

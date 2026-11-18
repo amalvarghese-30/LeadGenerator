@@ -43,6 +43,15 @@ class ContactValidator:
             result["domain_valid"] = True
             result["normalized_email"] = valid_info.normalized
             email_domain = valid_info.domain.lower()
+
+            # Reject known tracking, framework or dummy domains
+            disallowed_domains = {
+                "sentry.io", "wixpress.com", "cloudflare.com", "schema.org",
+                "example.com", "test.com", "domain.com", "sample.com", "placeholder.com"
+            }
+            if email_domain in disallowed_domains or any(email_domain.endswith(f".{d}") for d in disallowed_domains):
+                result["validation_error"] = f"Disallowed tracker or placeholder email domain: {email_domain}"
+                return result
         except EmailNotValidError as e:
             result["validation_error"] = str(e)
             return result

@@ -5,7 +5,7 @@ Order of operations per page:
   1. Multi-signal page classification (TextExtractor)
   2. Multi-signal deterministic extraction via PageAnalyzer (each candidate classified independently)
   3. Optional NVIDIA augmentation (merges with deterministic results without overwriting evidence)
-  4. Strict validation (EvidenceValidator + NameValidator)
+  4. Strict validation (EvidenceValidator + NameValidator + Competitor Blacklist)
   5. Distinction between:
      - Confirmed client references (case studies, testimonials, portfolio, client profiles)
      - Company-only references
@@ -15,7 +15,7 @@ Order of operations per page:
 Every persisted record has verification_status = "pending". AI cannot self-verify.
 """
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, List, Any, Tuple, Optional
 
 from app.ai.nvidia_client import NvidiaClient
@@ -33,16 +33,27 @@ class ClientClassifier:
         self.evidence_validator = EvidenceValidator()
         self.nvidia_client = NvidiaClient()
 
-    async def process_page(self, page_data: Dict[str, Any], provider_id: str) -> List[Dict[str, Any]]:
+    async def process_page(
+        self,
+        page_data: Dict[str, Any],
+        provider_id: str,
+        competitor_domain: Optional[str] = None,
+        competitor_brand: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
         """
         Backwards-compatible interface: returns list of validated client references.
-        Metadata and rejected items are stored on the classifier instance for job processor retrieval.
         """
-        results, _, _ = await self.process_page_detailed(page_data, provider_id)
+        results, _, _ = await self.process_page_detailed(
+            page_data, provider_id, competitor_domain=competitor_domain, competitor_brand=competitor_brand
+        )
         return results
 
     async def process_page_detailed(
-        self, page_data: Dict[str, Any], provider_id: str
+        self,
+        page_data: Dict[str, Any],
+        provider_id: str,
+        competitor_domain: Optional[str] = None,
+        competitor_brand: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], Dict[str, Any]]:
         """
         Process a page and return:
@@ -76,7 +87,7 @@ class ClientClassifier:
             )
             return [], [], page_meta
 
-        # 2. Deterministic rich extraction (with individual candidate relationship classification)
+        # 2. Deterministic rich extraction
         deterministic = self.page_analyzer.analyze(text, url, title)
 
         # 3. NVIDIA augmentation if available
@@ -92,14 +103,16 @@ class ClientClassifier:
         # 4. Merge results without overwriting deterministic high-precision evidence
         merged = self._merge(deterministic, ai_results, url)
 
-        # 5. Strict multi-stage validation
+        # 5. Strict multi-stage validation with competitor blacklist
         valid_references: List[Dict[str, Any]] = []
         rejected_candidates: List[Dict[str, Any]] = []
+
+        now_iso = datetime.now(timezone.utc).isoformat()
 
         for ref in merged:
             ref["provider_id"] = provider_id
             ref["page_category"] = page_meta["page_category"]
-            ref["collected_at"] = datetime.utcnow().isoformat()
+            ref["collected_at"] = now_iso
             ref["verification_status"] = "pending"
 
             # If page is a Published Client Profile, classify featured client as published_customer_profile
@@ -108,14 +121,17 @@ class ClientClassifier:
             ):
                 ref["relationship_type"] = "published_customer_profile"
 
-            # Check evidence validity
-            is_valid, rejection_reasons = self.evidence_validator.validate(ref, source_text=text)
+            # Check evidence validity with competitor blacklist
+            is_valid, rejection_reasons = self.evidence_validator.validate(
+                ref,
+                source_text=text,
+                competitor_domain=competitor_domain,
+                competitor_brand=competitor_brand,
+            )
 
             # Check if this relationship represents a real customer relationship
             rel = ref.get("relationship_type", "unclear_relationship")
             if rel not in CLIENT_CUSTOMER_RELATIONSHIPS:
-                # Collaborators, featured personalities, and ordinary mentions are classified accordingly
-                # but should not be treated as client references
                 rejection_reasons.append(f"Relationship type '{rel}' is not a client/customer relationship")
                 is_valid = False
 
@@ -125,7 +141,7 @@ class ClientClassifier:
                 rejected_record = {
                     **ref,
                     "rejection_reasons": rejection_reasons,
-                    "rejected_at": datetime.utcnow().isoformat(),
+                    "rejected_at": now_iso,
                 }
                 rejected_candidates.append(rejected_record)
                 logger.debug(

@@ -3,6 +3,7 @@ Evidence Validator.
 Validates extraction results prior to persistence.
 Guarantees source attribution, evidence quotation correspondence,
 validates person and company entities, validates relationship context,
+enforces competitor identity blacklisting (never save competitor as client),
 and enforces pending verification status (AI cannot self-verify).
 """
 import hashlib
@@ -32,6 +33,15 @@ CLIENT_CUSTOMER_RELATIONSHIPS = {
     "published_customer_profile",
 }
 
+GENERIC_UI_PHRASES = {
+    "view more", "learn more", "our services", "contact us", "read more",
+    "case studies", "case study", "view project", "our clients", "portfolio",
+    "terms of service", "privacy policy", "all rights reserved", "cookie policy",
+    "about us", "home", "services", "navigation", "menu", "get started",
+    "request a quote", "click here", "read story", "explore more", "see all",
+    "client stories", "testimonials", "what we do", "who we are", "back to top"
+}
+
 
 class EvidenceValidator:
     """Strict validator for extracted client references and evidence quotes."""
@@ -40,7 +50,11 @@ class EvidenceValidator:
         self.name_validator = NameValidator()
 
     def validate(
-        self, extraction_result: Dict[str, Any], source_text: Optional[str] = None
+        self,
+        extraction_result: Dict[str, Any],
+        source_text: Optional[str] = None,
+        competitor_domain: Optional[str] = None,
+        competitor_brand: Optional[str] = None,
     ) -> Tuple[bool, List[str]]:
         """
         Validate extracted reference against evidence requirements.
@@ -76,13 +90,29 @@ class EvidenceValidator:
             if not is_valid_name:
                 rejection_reasons.extend(name_issues)
 
-        # 4. If company name is provided, validate it's not a person or navigation phrase
+        # 4. If company name is provided, validate it's not a person, navigation phrase, or competitor itself
         if company_name:
             comp_clean = str(company_name).strip()
             if len(comp_clean) < 2 or len(comp_clean) > 80:
                 rejection_reasons.append(f"Invalid company name length: '{comp_clean}'")
-            if comp_clean.lower() in {"view more", "learn more", "our services", "contact us"}:
+
+            comp_lower = comp_clean.lower()
+            if comp_lower in GENERIC_UI_PHRASES:
                 rejection_reasons.append(f"Company name is generic navigation/UI phrase: '{comp_clean}'")
+
+            # Competitor self-reference blacklist
+            if competitor_brand and (
+                comp_lower == competitor_brand.lower()
+                or comp_lower in competitor_brand.lower()
+                or competitor_brand.lower() in comp_lower
+            ):
+                rejection_reasons.append(f"Entity matches target competitor brand '{competitor_brand}'")
+
+            if competitor_domain:
+                clean_cd = competitor_domain.lower().replace("www.", "")
+                root_cd = clean_cd.split(".")[0]
+                if len(root_cd) >= 4 and root_cd in comp_lower:
+                    rejection_reasons.append(f"Entity matches competitor domain name '{competitor_domain}'")
 
         # 5. Evidence quotation correspondence
         quote = (extraction_result.get("evidence_quote") or "").strip()
@@ -91,7 +121,6 @@ class EvidenceValidator:
         elif len(quote) < 15:
             rejection_reasons.append("Evidence quotation is too short (< 15 characters)")
         else:
-            # Check whether person name or company name is present in quote or source text
             quote_lower = quote.lower()
             text_lower = (source_text or "").lower()
 
@@ -116,7 +145,6 @@ class EvidenceValidator:
 
         # 7. Check that client relationship claim is actually supported by evidence
         if rel_type in CLIENT_CUSTOMER_RELATIONSHIPS and quote:
-            # Ordinary mentions or generic sales text should not masquerade as confirmed client cases
             quote_lower = quote.lower()
             has_client_keyword = any(k in quote_lower for k in [
                 "testimonial", "case study", "client", "customer", "project for",
@@ -127,15 +155,19 @@ class EvidenceValidator:
             if not has_client_keyword and not has_role:
                 rejection_reasons.append("No contextual evidence supporting client/customer relationship")
 
-        # 8. Prevent hallucinated emails
+        # 8. Minimum Confidence Check (if confidence explicitly provided, must be >= 0.60)
+        if "confidence" in extraction_result and float(extraction_result["confidence"]) < 0.60:
+            rejection_reasons.append(f"Confidence score {float(extraction_result['confidence']):.2f} is below minimum threshold 0.60")
+
+        # 9. Prevent hallucinated emails
         if "email" in extraction_result and extraction_result["email"]:
             if extraction_result.get("extraction_method") == "nvidia_nemotron":
                 extraction_result.pop("email", None)
 
-        # 9. Enforce mandatory verification status
+        # 10. Enforce mandatory verification status
         extraction_result["verification_status"] = "pending"
 
-        # 10. Generate deterministic source hash
+        # 11. Generate deterministic source hash
         extraction_result["source_hash"] = self.hash_evidence(
             source_url or "",
             quote or ""

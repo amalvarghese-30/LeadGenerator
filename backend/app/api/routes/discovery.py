@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import re
 from datetime import datetime, timezone
 from typing import Optional, Dict, Any, List
 from bson import ObjectId
@@ -293,6 +294,66 @@ async def get_job_report(
     if report.get("generated_at") and hasattr(report["generated_at"], "isoformat"):
         report["generated_at"] = report["generated_at"].isoformat()
     return report
+
+
+@router.get("/jobs/{job_id}/results")
+async def get_job_results(
+    job_id: str,
+    db: AsyncIOMotorDatabase = Depends(get_db),
+    _user: dict = Depends(get_current_user),
+):
+    if not ObjectId.is_valid(job_id):
+        raise HTTPException(400, "Invalid job ID")
+    job = await db.crawl_jobs.find_one({"_id": ObjectId(job_id)})
+    if not job:
+        raise HTTPException(404, "Job not found")
+
+    provider_id = job.get("provider_id")
+    refs_cursor = db.provider_client_references.find({"provider_id": provider_id}).sort("confidence", -1).limit(100)
+    references = await refs_cursor.to_list(100)
+
+    results = []
+    for ref in references:
+        ref_id = str(ref["_id"])
+        comp_name = ref.get("company_name")
+        person_name = ref.get("person_name")
+
+        company = None
+        if comp_name:
+            company = await db.companies.find_one({"name": {"$regex": f"^{re.escape(comp_name)}$", "$options": "i"}})
+
+        contact = None
+        if ref_id:
+            contact = await db.contacts.find_one({"source_references": ref_id})
+        if not contact and person_name:
+            contact = await db.contacts.find_one({"full_name": {"$regex": f"^{re.escape(person_name)}$", "$options": "i"}})
+
+        results.append({
+            "id": ref_id,
+            "company_name": comp_name or (company.get("name") if company else None),
+            "company_website": company.get("website") if company else None,
+            "industry": ref.get("industry") or (company.get("industry") if company else None),
+            "person_name": person_name or (contact.get("full_name") if contact else None),
+            "designation": ref.get("designation") or (contact.get("designation") if contact else None),
+            "relationship_type": ref.get("relationship_type", "confirmed_client_case_study"),
+            "confidence": float(ref.get("confidence", 0.7)),
+            "evidence_quote": ref.get("evidence_quote"),
+            "source_url": ref.get("source_url"),
+            "verification_status": ref.get("verification_status", "pending"),
+            "contacts": {
+                "email": contact.get("email") if contact else None,
+                "phone": contact.get("phone") if contact else None,
+                "linkedin": contact.get("linkedin_url") or (contact.get("professional_urls", {}).get("linkedin") if contact else None),
+                "channels": contact.get("contact_channels", []) if contact else [],
+            }
+        })
+
+    return {
+        "job_id": job_id,
+        "status": job.get("status"),
+        "total_results": len(results),
+        "results": results
+    }
 
 
 @router.post("/jobs/{job_id}/cancel")

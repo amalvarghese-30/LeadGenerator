@@ -4,23 +4,9 @@ import { AuthProvider, useAuth } from './hooks/useAuth';
 import { ToastProvider } from './context/ToastContext';
 import { MainLayout } from './components/Layout/MainLayout';
 import { Login } from './pages/Auth/Login';
-import { Dashboard } from './pages/Dashboard';
-import { LeadGenerator } from './pages/LeadGenerator';
-import { PeopleFinder } from './pages/PeopleFinder';
-import { CompanyFinder } from './pages/CompanyFinder';
-import { AutoProfileCreator } from './pages/AutoProfileCreator';
-import { WebsiteIntelligence } from './pages/WebsiteIntelligence';
-import { CompetitorIntelligence } from './pages/CompetitorIntelligence';
+import { Scanner } from './pages/Scanner';
+import { Directory } from './pages/Directory';
 import { RateLimitChecker } from './pages/RateLimitChecker';
-import { Providers } from './pages/Providers';
-import { ProviderDetail } from './pages/Providers/ProviderDetail';
-import { Leads } from './pages/Leads';
-import { LeadDetail } from './pages/Leads/LeadDetail';
-import { Contacts } from './pages/Contacts';
-import { Companies } from './pages/Companies';
-import { Tasks } from './pages/Tasks';
-import { Reports } from './pages/Reports';
-import { ResearchReport } from './pages/Reports/ResearchReport';
 import { Settings } from './pages/Settings';
 import { LoadingSpinner } from './components/ui/LoadingSpinner';
 
@@ -28,7 +14,7 @@ const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) =
   const { isAuthenticated, isLoading } = useAuth();
   if (isLoading) {
     return (
-      <div className="h-screen w-screen flex items-center justify-center bg-slate-50">
+      <div className="h-screen w-screen flex items-center justify-center bg-slate-950 text-slate-100">
         <LoadingSpinner message="Authenticating session..." />
       </div>
     );
@@ -43,65 +29,50 @@ export const App: React.FC = () => {
       <ToastProvider>
         <BrowserRouter>
           <Routes>
-          <Route path="/login" element={<Login />} />
-          <Route path="/" element={<ProtectedRoute><MainLayout /></ProtectedRoute>}>
-            <Route index element={<Navigate to="/dashboard" replace />} />
-            {/* 1. Dashboard */}
-            <Route path="dashboard" element={<Dashboard />} />
+            <Route path="/login" element={<Login />} />
+            <Route
+              path="/"
+              element={
+                <ProtectedRoute>
+                  <MainLayout />
+                </ProtectedRoute>
+              }
+            >
+              {/* Core Workspace 1: Scanner (Competitor Client Finder) */}
+              <Route index element={<Scanner />} />
+              <Route path="scanner" element={<Scanner />} />
 
-            {/* 2. Lead Generator */}
-            <Route path="lead-generator" element={<LeadGenerator />} />
+              {/* Core Workspace 2: Client & Contact Directory */}
+              <Route path="directory" element={<Directory />} />
 
-            {/* 3. People Finder */}
-            <Route path="people-finder" element={<PeopleFinder />} />
+              {/* Core Workspace 3: Rate Limit Profiler */}
+              <Route path="rate-limits" element={<RateLimitChecker />} />
 
-            {/* 4. Company Finder */}
-            <Route path="company-finder" element={<CompanyFinder />} />
+              {/* Settings */}
+              <Route path="settings" element={<Settings />} />
 
-            {/* 5. Auto Profile Creator */}
-            <Route path="auto-profile-creator" element={<AutoProfileCreator />} />
-
-            {/* 6. Website Intelligence */}
-            <Route path="website-intelligence" element={<WebsiteIntelligence />} />
-            {/* Backward-compatible alias for discovery */}
-            <Route path="discovery" element={<WebsiteIntelligence />} />
-
-            {/* 7. Competitor Intelligence */}
-            <Route path="competitor-intelligence" element={<CompetitorIntelligence />} />
-
-            {/* 8. Rate Limit Checker */}
-            <Route path="rate-limit-checker" element={<RateLimitChecker />} />
-
-            {/* 9. Leads CRM */}
-            <Route path="leads" element={<Leads />} />
-            <Route path="leads/:id" element={<LeadDetail />} />
-
-            {/* 10. Companies CRM */}
-            <Route path="companies" element={<Companies />} />
-
-            {/* 11. Contacts CRM */}
-            <Route path="contacts" element={<Contacts />} />
-
-            {/* 12. Providers */}
-            <Route path="providers" element={<Providers />} />
-            <Route path="providers/:id" element={<ProviderDetail />} />
-
-            {/* 13. Reports */}
-            <Route path="reports" element={<Reports />} />
-            <Route path="reports/:jobId" element={<ResearchReport />} />
-
-            {/* 14. Tasks & Activities */}
-            <Route path="tasks" element={<Tasks />} />
-
-            {/* 15. Settings */}
-            <Route path="settings" element={<Settings />} />
-          </Route>
-          <Route path="*" element={<Navigate to="/dashboard" replace />} />
-        </Routes>
-      </BrowserRouter>
-    </ToastProvider>
-  </AuthProvider>
-);
+              {/* Backward-Compatible Redirects */}
+              <Route path="dashboard" element={<Navigate to="/" replace />} />
+              <Route path="website-intelligence" element={<Navigate to="/" replace />} />
+              <Route path="discovery" element={<Navigate to="/" replace />} />
+              <Route path="competitor-intelligence" element={<Navigate to="/" replace />} />
+              <Route path="lead-generator" element={<Navigate to="/" replace />} />
+              <Route path="people-finder" element={<Navigate to="/directory" replace />} />
+              <Route path="company-finder" element={<Navigate to="/directory" replace />} />
+              <Route path="contacts" element={<Navigate to="/directory" replace />} />
+              <Route path="companies" element={<Navigate to="/directory" replace />} />
+              <Route path="leads" element={<Navigate to="/directory" replace />} />
+              <Route path="providers" element={<Navigate to="/" replace />} />
+              <Route path="reports" element={<Navigate to="/" replace />} />
+              <Route path="tasks" element={<Navigate to="/" replace />} />
+              <Route path="rate-limit-checker" element={<Navigate to="/rate-limits" replace />} />
+            </Route>
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Routes>
+        </BrowserRouter>
+      </ToastProvider>
+    </AuthProvider>
+  );
 };
 
 export default App;

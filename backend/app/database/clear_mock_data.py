@@ -17,6 +17,9 @@ COLLECTIONS_TO_CLEAR = [
     "crawl_jobs",
     "discovered_urls",
     "suppression_records",
+    "competitors",
+    "crawl_events",
+    "rate_limit_metrics",
 ]
 
 async def clear_mock_data():
@@ -26,8 +29,11 @@ async def clear_mock_data():
 
     print("Cleaning collections...")
     for col_name in COLLECTIONS_TO_CLEAR:
-        res = await db[col_name].delete_many({})
-        print(f" - Cleared {col_name}: {res.deleted_count} documents removed")
+        try:
+            res = await db[col_name].delete_many({})
+            print(f" - Cleared {col_name}: {res.deleted_count} documents removed")
+        except Exception as e:
+            print(f" - Notice on {col_name}: {e}")
 
     users_count = await db.users.count_documents({})
     print(f"\nPreserved {users_count} user account(s) in 'users' collection.")

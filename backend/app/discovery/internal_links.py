@@ -1,6 +1,6 @@
 """
 Breadth-first internal link crawler with SSRF protection, domain boundary respect,
-path prioritization and canonicalization.
+path prioritization, canonicalization, and realistic stealth browser headers.
 """
 import asyncio
 import logging
@@ -12,6 +12,7 @@ import httpx
 
 from app.discovery.url_normalizer import URLNormalizer
 from app.utils.ssrf_guard import is_safe_url
+from app.utils.http_client import get_stealth_headers
 
 logger = logging.getLogger(__name__)
 
@@ -47,11 +48,9 @@ class InternalLinkCrawler:
         queue: deque = deque([(self.normalizer.normalize(start_url), 0, None)])
         results: List[Dict[str, Any]] = []
 
-        headers = {
-            "User-Agent": "LeadIntel-Researcher/1.0 (internal-link-discovery)"
-        }
+        headers = get_stealth_headers(url=start_url)
 
-        async with httpx.AsyncClient(timeout=self.timeout, follow_redirects=True, headers=headers) as client:
+        async with httpx.AsyncClient(timeout=self.timeout, follow_redirects=True, headers=headers, http2=True) as client:
             while queue and len(visited) < self.max_pages:
                 current_url, depth, parent_url = queue.popleft()
                 norm_url = self.normalizer.normalize(current_url)
@@ -59,75 +58,92 @@ class InternalLinkCrawler:
                 if norm_url in visited or depth > self.max_depth:
                     continue
 
-                safe, _ = is_safe_url(norm_url)
-                if not safe:
-                    continue
-
                 visited.add(norm_url)
 
+                is_safe, reason = is_safe_url(current_url)
+                if not is_safe:
+                    continue
+
                 try:
-                    resp = await client.get(norm_url)
+                    if len(visited) > 1 and self.delay > 0:
+                        await asyncio.sleep(self.delay)
+
+                    # Update referer in headers for realistic navigation
+                    page_headers = get_stealth_headers(url=current_url, referer=parent_url)
+                    resp = await client.get(current_url, headers=page_headers)
+
+                    if resp.status_code != 200:
+                        continue
+
                     content_type = resp.headers.get("content-type", "")
-                    if resp.status_code == 200 and "text/html" in content_type:
-                        page_type = self._classify_page(norm_url)
-                        priority = self._calculate_priority(norm_url, page_type)
+                    if "text/html" not in content_type:
+                        continue
 
-                        results.append({
-                            "url": norm_url,
-                            "depth": depth,
-                            "source_url": parent_url,
-                            "page_type": page_type,
-                            "priority_score": priority,
-                            "status_code": resp.status_code,
-                        })
+                    html = resp.text
+                    soup = BeautifulSoup(html, "html.parser")
 
-                        # Extract internal links
-                        soup = BeautifulSoup(resp.text, "html.parser")
-                        for a in soup.find_all("a", href=True):
-                            href = a["href"].strip()
-                            if href.startswith(("mailto:", "tel:", "javascript:", "#")):
-                                continue
-                            full_url = urljoin(norm_url, href)
-                            if self.normalizer.is_same_domain(full_url, norm_url):
-                                normalized_child = self.normalizer.normalize(full_url)
-                                if normalized_child not in visited:
-                                    queue.append((normalized_child, depth + 1, norm_url))
+                    # Extract canonical URL if present
+                    canonical_url = None
+                    canon_tag = soup.find("link", rel=lambda val: val and "canonical" in val.lower())
+                    if canon_tag and canon_tag.get("href"):
+                        canonical_url = urljoin(current_url, canon_tag["href"].strip())
 
-                    await asyncio.sleep(self.delay)
+                    # Record this discovered page
+                    results.append({
+                        "url": current_url,
+                        "canonical_url": canonical_url,
+                        "source": "internal_link",
+                        "depth": depth,
+                        "parent_url": parent_url,
+                        "priority": self._score_priority(current_url),
+                    })
+
+                    # If at max depth, don't extract child links
+                    if depth >= self.max_depth:
+                        continue
+
+                    # Extract and enqueue internal links
+                    child_links = self._extract_links(soup, current_url, base_domain)
+                    child_links.sort(key=lambda u: self._score_priority(u), reverse=True)
+
+                    for child in child_links:
+                        norm_child = self.normalizer.normalize(child)
+                        if norm_child not in visited:
+                            queue.append((child, depth + 1, current_url))
+
                 except Exception as e:
-                    logger.debug(f"Error crawling {norm_url}: {e}")
+                    logger.debug(f"Failed to crawl internal link {current_url}: {e}")
+                    continue
 
-        # Sort by priority score descending
-        results.sort(key=lambda x: x["priority_score"], reverse=True)
         return results
 
-    def _classify_page(self, url: str) -> str:
-        url_lower = url.lower()
-        if any(k in url_lower for k in ["case-study", "case-studies", "results"]):
-            return "case_study"
-        if any(k in url_lower for k in ["testimonial", "review"]):
-            return "testimonial"
-        if any(k in url_lower for k in ["portfolio", "our-work", "work"]):
-            return "portfolio"
-        if any(k in url_lower for k in ["client", "customer"]):
-            return "client_list"
-        if any(k in url_lower for k in ["about", "founder", "team"]):
-            return "about"
-        if any(k in url_lower for k in ["service", "what-we-do"]):
-            return "services"
-        if "contact" in url_lower:
-            return "contact"
-        return "general"
+    def _extract_links(self, soup: BeautifulSoup, base_url: str, base_domain: str) -> List[str]:
+        links = []
+        for a in soup.find_all("a", href=True):
+            href = a["href"].strip()
+            if not href or href.startswith(("#", "javascript:", "mailto:", "tel:")):
+                continue
 
-    def _calculate_priority(self, url: str, page_type: str) -> int:
-        type_weights = {
-            "case_study": 95,
-            "testimonial": 90,
-            "portfolio": 85,
-            "client_list": 80,
-            "about": 70,
-            "services": 65,
-            "contact": 60,
-            "general": 30,
-        }
-        return type_weights.get(page_type, 30)
+            absolute = urljoin(base_url, href)
+            # Fragment removal
+            parsed = urlparse(absolute)
+            clean_url = parsed._replace(fragment="").geturl()
+
+            # Domain boundary check: must match base_domain or subdomain
+            child_domain = self.normalizer.extract_domain(clean_url)
+            if child_domain and (child_domain == base_domain or child_domain.endswith(f".{base_domain}")):
+                # Filter out asset extensions
+                path = parsed.path.lower()
+                if not any(path.endswith(ext) for ext in [
+                    ".png", ".jpg", ".jpeg", ".gif", ".svg", ".css", ".js",
+                    ".pdf", ".zip", ".tar", ".gz", ".mp4", ".mp3", ".woff", ".woff2"
+                ]):
+                    links.append(clean_url)
+        return links
+
+    def _score_priority(self, url: str) -> int:
+        u = url.lower()
+        for kw in PRIORITY_KEYWORDS:
+            if kw in u:
+                return 80
+        return 30
