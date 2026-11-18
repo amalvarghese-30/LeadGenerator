@@ -194,6 +194,13 @@ export const Scanner: React.FC = () => {
     setUnseenCount(0);
     reconnectAttemptRef.current = 0;
 
+    const stopPolling = () => {
+      if (pollRef.current) {
+        window.clearInterval(pollRef.current);
+        pollRef.current = null;
+      }
+    };
+
     const mergeEvents = (newEvents: JobEvent[]) => {
       if (!newEvents || newEvents.length === 0) return;
       setEvents((prev) => {
@@ -272,6 +279,7 @@ export const Scanner: React.FC = () => {
 
             if (currentEventType === 'close') {
               setConnectionStatus('finished');
+              stopPolling();
               fetchRecentJobs();
               fetchJobResults(activeJobId);
               return;
@@ -282,6 +290,12 @@ export const Scanner: React.FC = () => {
                 const parsed = JSON.parse(eventData);
                 if (currentEventId && !parsed.id) parsed.id = currentEventId;
                 batchEvents.push(parsed);
+                if (['job_completed', 'job_failed', 'job_cancelled'].includes(parsed.event_type)) {
+                  setConnectionStatus('finished');
+                  stopPolling();
+                  fetchRecentJobs();
+                  fetchJobResults(activeJobId);
+                }
               } catch {
                 // ignore malformed line
               }
@@ -314,6 +328,7 @@ export const Scanner: React.FC = () => {
             ['completed', 'completed_with_warnings', 'failed', 'cancelled'].includes(updated.status)
           ) {
             setConnectionStatus('finished');
+            stopPolling();
             fetchJobResults(activeJobId);
             fetchRecentJobs();
           }
@@ -338,26 +353,28 @@ export const Scanner: React.FC = () => {
             })
             .catch(() => {});
 
-          if (
-            !['completed', 'completed_with_warnings', 'failed', 'cancelled'].includes(
-              initialJob.status
-            )
-          ) {
+          const isTerminal = ['completed', 'completed_with_warnings', 'failed', 'cancelled'].includes(
+            initialJob.status
+          );
+
+          if (!isTerminal) {
             startStream();
+            if (!pollRef.current) {
+              pollRef.current = window.setInterval(pollJobStatus, 3000);
+            }
           } else {
             setConnectionStatus('finished');
+            stopPolling();
           }
         }
       })
       .catch(() => {});
 
-    pollRef.current = window.setInterval(pollJobStatus, 3000);
-
     return () => {
       isCancelled = true;
       if (abortControllerRef.current) abortControllerRef.current.abort();
       if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
-      if (pollRef.current) clearInterval(pollRef.current);
+      stopPolling();
       if (scrollRafRef.current) cancelAnimationFrame(scrollRafRef.current);
     };
   }, [activeJobId]);
@@ -438,6 +455,10 @@ export const Scanner: React.FC = () => {
       setIsCancelModalOpen(false);
       setJob((prev) => (prev ? { ...prev, status: 'cancelled' } : null));
       setConnectionStatus('finished');
+      if (pollRef.current) {
+        window.clearInterval(pollRef.current);
+        pollRef.current = null;
+      }
       fetchRecentJobs();
     } catch (err: any) {
       setError(err.response?.data?.detail || 'Failed to cancel scan.');
@@ -449,7 +470,15 @@ export const Scanner: React.FC = () => {
   const handleRetryJob = async (jobId: string) => {
     try {
       await retryCrawlJob(jobId);
-      setActiveJobId(jobId);
+      if (activeJobId === jobId) {
+        setJob((prev) =>
+          prev ? { ...prev, status: 'pending', current_stage: 'queued', progress_pct: 0 } : null
+        );
+        setActiveJobId(null);
+        setTimeout(() => setActiveJobId(jobId), 50);
+      } else {
+        setActiveJobId(jobId);
+      }
       setEvents([]);
       lastEventIdRef.current = null;
       fetchRecentJobs();
@@ -874,10 +903,35 @@ export const Scanner: React.FC = () => {
           ) : filteredResults.length === 0 ? (
             <div className="py-12 text-center text-slate-400 space-y-2">
               <Building2 className="w-10 h-10 mx-auto text-slate-700" />
-              <p className="text-sm font-semibold text-slate-300">No client records discovered yet</p>
-              <p className="text-xs text-slate-400 max-w-sm mx-auto">
-                Trigger a scan above using a valid agency or service provider URL to discover their client portfolio.
-              </p>
+              {job && ['running', 'pending'].includes(job.status) ? (
+                <>
+                  <p className="text-sm font-semibold text-cyan-400 animate-pulse">Scan in progress...</p>
+                  <p className="text-xs text-slate-400 max-w-sm mx-auto">
+                    Currently scanning pages and extracting customer references. Results will appear here once extracted.
+                  </p>
+                </>
+              ) : job && ['completed', 'completed_with_warnings'].includes(job.status) ? (
+                <>
+                  <p className="text-sm font-semibold text-slate-300">No client records discovered</p>
+                  <p className="text-xs text-slate-400 max-w-sm mx-auto">
+                    The scan finished, but no explicit customer case studies or client references were identified on this domain. Try running a scan with Deep Stealth enabled or scanning another URL.
+                  </p>
+                </>
+              ) : job && job.status === 'failed' ? (
+                <>
+                  <p className="text-sm font-semibold text-red-400">Scan failed</p>
+                  <p className="text-xs text-slate-400 max-w-sm mx-auto">
+                    The scan encountered errors. Inspect the execution logs above or retry the job.
+                  </p>
+                </>
+              ) : (
+                <>
+                  <p className="text-sm font-semibold text-slate-300">No client records discovered yet</p>
+                  <p className="text-xs text-slate-400 max-w-sm mx-auto">
+                    Trigger a scan above using a valid agency or service provider URL to discover their client portfolio.
+                  </p>
+                </>
+              )}
             </div>
           ) : (
             <table className="w-full text-left text-xs border-collapse">
