@@ -26,12 +26,15 @@ class CompanyDocument(BaseModel):
     country: Optional[str] = None
     city: Optional[str] = None
     state: Optional[str] = None
+    address: Optional[str] = None
+    aliases: List[str] = Field(default_factory=list)
     linkedin_url: Optional[str] = None
     employee_count: Optional[str] = None
     revenue_range: Optional[str] = None
     public_contact: Dict[str, str] = Field(default_factory=dict)  # {email, phone, address}
     public_contact_channels: List[Dict[str, Any]] = Field(default_factory=list)
     social_profiles: List[Dict[str, Any]] = Field(default_factory=list)
+    associated_people: List[Dict[str, Any]] = Field(default_factory=list)
     enrichment_status: str = "pending"  # pending | enriching | enriched | partial | no_website | failed
     enrichment_attempts: int = 0
     last_enriched_at: Optional[datetime] = None

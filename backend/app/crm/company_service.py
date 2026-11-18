@@ -94,6 +94,29 @@ async def create_company_with_status(
             updates["website"] = website
         if not existing.get("linkedin_url") and linkedin:
             updates["linkedin_url"] = linkedin
+        if not existing.get("description") and data.get("description"):
+            updates["description"] = data["description"]
+        if not existing.get("address") and data.get("address"):
+            updates["address"] = data["address"]
+        if not existing.get("country") and data.get("country"):
+            updates["country"] = data["country"]
+        if not existing.get("city") and data.get("city"):
+            updates["city"] = data["city"]
+        if not existing.get("state") and data.get("state"):
+            updates["state"] = data["state"]
+
+        # Merge aliases
+        existing_aliases = set(existing.get("aliases") or [])
+        new_aliases = [a for a in (data.get("aliases") or []) if a and a not in existing_aliases]
+        if new_aliases:
+            updates["aliases"] = list(existing_aliases.union(new_aliases))
+
+        # Merge associated_people without duplicates by normalized name
+        existing_people = existing.get("associated_people") or []
+        existing_p_names = {p.get("full_name", "").strip().lower() for p in existing_people if isinstance(p, dict)}
+        new_people = [p for p in (data.get("associated_people") or []) if isinstance(p, dict) and p.get("full_name", "").strip().lower() not in existing_p_names]
+        if new_people:
+            updates["associated_people"] = existing_people + new_people
 
         # Merge public contact info if missing
         curr_contact = dict(existing.get("public_contact") or {})
@@ -140,6 +163,10 @@ async def create_company_with_status(
         "public_contact": data.get("public_contact") or {},
         "public_contact_channels": data.get("public_contact_channels") or [],
         "social_profiles": data.get("social_profiles") or [],
+        "associated_people": data.get("associated_people") or [],
+        "aliases": data.get("aliases") or [],
+        "address": data.get("address"),
+        "description": data.get("description"),
         "enrichment_status": data.get("enrichment_status", "pending"),
         "enrichment_attempts": data.get("enrichment_attempts", 0),
         "source_references": data.get("source_references") or [],

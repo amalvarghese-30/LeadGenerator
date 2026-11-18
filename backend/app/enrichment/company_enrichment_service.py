@@ -5,6 +5,7 @@ extracting public business emails, phone numbers, contact forms, social media pr
 and optionally discovering decision-makers without requiring a preexisting person contact.
 """
 import asyncio
+import json
 import logging
 import re
 from datetime import datetime, timezone
@@ -17,6 +18,8 @@ import tldextract
 
 from app.discovery.client_website_resolver import ClientWebsiteResolver
 from app.discovery.url_normalizer import URLNormalizer
+from app.discovery.social_discovery import SocialDiscovery
+from app.discovery.people_discovery_service import PeopleDiscoveryService
 from app.enrichment.contact_page_discovery import ContactPageDiscovery
 from app.enrichment.public_email_extractor import PublicEmailExtractor, EMAIL_REGEX
 from app.enrichment.public_phone_extractor import PublicPhoneExtractor, PHONE_REGEX
@@ -39,6 +42,8 @@ class CompanyEnrichmentService:
         self.website_resolver = ClientWebsiteResolver(timeout_seconds=timeout_seconds)
         self.normalizer = URLNormalizer()
         self.person_extractor = PersonProfileExtractor()
+        self.people_discovery = PeopleDiscoveryService()
+        self.social_discovery = SocialDiscovery()
 
     async def enrich_company(
         self,
@@ -252,40 +257,70 @@ class CompanyEnrichmentService:
                             "collected_at": now_iso,
                         })
 
-            # D. Social media links
-            for a in soup.find_all("a", href=True):
-                href = a["href"].strip()
-                href_lower = href.lower()
-                for plat in ["linkedin.com/company", "facebook.com", "instagram.com", "twitter.com", "x.com", "youtube.com"]:
-                    if plat in href_lower:
-                        if href not in seen_social_urls:
-                            seen_social_urls.add(href)
-                            platform_name = plat.split(".")[0]
-                            social_profiles.append({
-                                "platform": platform_name,
-                                "url": href,
-                                "source_url": page_url,
-                            })
-                            extracted_channels.append({
-                                "type": "social",
-                                "scope": "company_generic",
-                                "value": href,
-                                "source_url": page_url,
-                                "source_type": "social_link",
-                                "evidence_quote": f"Official {platform_name} link: {href}",
-                                "syntax_valid": True,
-                                "source_verified": True,
-                                "verification_status": "published",
-                                "confidence": 0.9,
-                                "collected_at": now_iso,
-                            })
+            # D. Social media discovery via structured SocialDiscovery
+            discovered_socials = self.social_discovery.discover_from_html(html, page_url)
+            for s_item in discovered_socials:
+                s_url = s_item.get("url")
+                if s_url and s_url not in seen_social_urls:
+                    seen_social_urls.add(s_url)
+                    plat_name = s_item.get("platform", "social")
+                    social_profiles.append({
+                        "platform": plat_name,
+                        "url": s_url,
+                        "handle": s_item.get("handle"),
+                        "source_url": page_url,
+                        "account_type": "company",
+                        "verification_status": s_item.get("verification_status", "likely_official"),
+                        "confidence": s_item.get("confidence", 0.85),
+                    })
+                    extracted_channels.append({
+                        "type": "social",
+                        "scope": "company_generic",
+                        "value": s_url,
+                        "source_url": page_url,
+                        "source_type": s_item.get("extraction_method", "social_link"),
+                        "evidence_quote": f"Official {plat_name} account ({s_url}) discovered from {page_url}",
+                        "syntax_valid": True,
+                        "source_verified": True,
+                        "verification_status": s_item.get("verification_status", "published"),
+                        "confidence": s_item.get("confidence", 0.85),
+                        "collected_at": now_iso,
+                    })
 
-            # E. Optional Decision-Maker Discovery from About/Team sections
-            if any(k in page_url.lower() for k in ["about", "team", "leadership", "management", "company"]):
-                dm_list = self._extract_decision_makers_from_soup(soup, page_url, company_name)
-                for dm in dm_list:
-                    if not any(d["full_name"].lower() == dm["full_name"].lower() for d in decision_maker_candidates):
-                        decision_maker_candidates.append(dm)
+            # E. Company Description, Address, and Aliases extraction from DOM / JSON-LD
+            if not company.get("description"):
+                meta_desc = soup.find("meta", attrs={"name": "description"}) or soup.find("meta", attrs={"property": "og:description"})
+                if meta_desc and meta_desc.get("content"):
+                    desc_text = meta_desc["content"].strip()
+                    if desc_text and len(desc_text) > 10:
+                        company["description"] = desc_text[:500]
+
+            if not company.get("address"):
+                addr_tag = soup.find("address")
+                if addr_tag:
+                    addr_text = re.sub(r'\s+', ' ', addr_tag.get_text(separator=' ', strip=True))
+                    if len(addr_text) > 8:
+                        company["address"] = addr_text[:250]
+
+            # F. People & Leadership Discovery from HTML / JSON-LD
+            page_people = self.people_discovery.discover_from_html(
+                html, page_url, company_name, base_domain
+            )
+            for p in page_people:
+                if not any(d["full_name"].lower() == p["full_name"].lower() for d in decision_maker_candidates):
+                    decision_maker_candidates.append(p)
+
+        # 6B. Optional Fallback: Permitted Public Search for Company Leadership
+        if len(decision_maker_candidates) < 2 and company_name:
+            try:
+                search_people = self.people_discovery.discover_from_search(
+                    company_name, base_domain, max_queries=2
+                )
+                for sp in search_people:
+                    if not any(d["full_name"].lower() == sp["full_name"].lower() for d in decision_maker_candidates):
+                        decision_maker_candidates.append(sp)
+            except Exception as se:
+                logger.warning("[COMPANY_ENRICH] People search fallback failed gracefully: %s", se)
 
         # 7. Persist enriched data to MongoDB
         primary_email = next((c["value"] for c in extracted_channels if c["type"] == "email"), None)
@@ -297,47 +332,108 @@ class CompanyEnrichmentService:
         if primary_phone and not public_contact.get("phone"):
             public_contact["phone"] = primary_phone
 
-        final_status = "enriched" if extracted_channels else "no_contacts_found"
+        # 8. Manage Contact documents and multi-company associations for identified people
+        created_contacts = []
+        associated_people = list(company.get("associated_people") or [])
+        seen_assoc_names = {p.get("full_name", "").lower() for p in associated_people if isinstance(p, dict)}
 
-        update_doc = {
+        for dm in decision_maker_candidates:
+            try:
+                dm_name = dm.get("full_name")
+                if not dm_name:
+                    continue
+                dm_norm = dm_name.lower().strip()
+
+                # Find if contact already exists in MongoDB
+                existing_contact = await db.contacts.find_one({
+                    "full_name": dm_name,
+                    "$or": [
+                        {"company_id": company_id},
+                        {"associated_companies.company_id": str(company_id)},
+                        {"company_name": company_name},
+                    ]
+                })
+
+                if not existing_contact:
+                    assoc_entry = {
+                        "company_id": str(company_id),
+                        "company_name": company_name,
+                        "designation": dm.get("designation") or "Executive",
+                        "source": dm.get("discovery_source") or "company_leadership_enrichment",
+                        "confidence": dm.get("confidence", 0.8),
+                        "verification_status": dm.get("verification_status", "source_verified"),
+                        "verified_at": now_iso,
+                    }
+                    c_doc = {
+                        "company_id": company_id,
+                        "company_name": company_name,
+                        "full_name": dm_name,
+                        "designation": dm.get("designation") or "Executive",
+                        "source": dm.get("discovery_source") or "company_leadership_enrichment",
+                        "verification_status": dm.get("verification_status", "source_verified"),
+                        "email": dm.get("email") or (dm.get("public_emails")[0] if dm.get("public_emails") else None),
+                        "phone": dm.get("phone") or (dm.get("public_phones")[0] if dm.get("public_phones") else None),
+                        "linkedin_url": dm.get("linkedin_url"),
+                        "professional_urls": dm.get("professional_urls") or {},
+                        "evidence_quote": dm.get("evidence_quote"),
+                        "associated_companies": [assoc_entry],
+                        "created_at": now,
+                        "updated_at": now,
+                    }
+                    ins_res = await db.contacts.insert_one(c_doc)
+                    contact_id_str = str(ins_res.inserted_id)
+                    c_doc["_id"] = contact_id_str
+                    created_contacts.append(c_doc)
+                else:
+                    contact_id_str = str(existing_contact.get("_id", ""))
+                    # Check if company is in existing contact's associated_companies
+                    existing_assocs = existing_contact.get("associated_companies") or []
+                    already_linked = any(str(a.get("company_id")) == str(company_id) for a in existing_assocs if isinstance(a, dict))
+                    if not already_linked:
+                        await db.contacts.update_one(
+                            {"_id": existing_contact["_id"]},
+                            {"$push": {"associated_companies": {
+                                "company_id": str(company_id),
+                                "company_name": company_name,
+                                "designation": dm.get("designation") or "Executive",
+                                "source": dm.get("discovery_source") or "company_leadership_enrichment",
+                                "confidence": dm.get("confidence", 0.8),
+                                "verification_status": dm.get("verification_status", "source_verified"),
+                                "verified_at": now_iso,
+                            }}}
+                        )
+
+                if dm_norm not in seen_assoc_names:
+                    seen_assoc_names.add(dm_norm)
+                    associated_people.append({
+                        "contact_id": contact_id_str,
+                        "full_name": dm_name,
+                        "designation": dm.get("designation") or "Executive",
+                        "linkedin_url": dm.get("linkedin_url"),
+                        "verification_status": dm.get("verification_status", "source_verified"),
+                        "confidence": dm.get("confidence", 0.8),
+                    })
+            except Exception as ce:
+                logger.debug("[COMPANY_ENRICH] Error creating decision-maker contact: %s", ce)
+
+        final_status = "enriched" if (extracted_channels or associated_people) else "no_contacts_found"
+
+        update_doc: Dict[str, Any] = {
             "public_contact": public_contact,
             "public_contact_channels": extracted_channels,
             "social_profiles": social_profiles,
+            "associated_people": associated_people,
             "enrichment_status": final_status,
             "enrichment_attempts": company.get("enrichment_attempts", 0) + 1,
             "last_enriched_at": now,
             "updated_at": now,
         }
+        if company.get("description"):
+            update_doc["description"] = company["description"]
+        if company.get("address"):
+            update_doc["address"] = company["address"]
 
         await db.companies.update_one({"_id": ObjectId(company_id)}, {"$set": update_doc})
-
-        # 8. Optionally create Contact documents for identified decision-makers
-        created_contacts = []
-        for dm in decision_maker_candidates:
-            try:
-                existing_contact = await db.contacts.find_one({
-                    "company_id": company_id,
-                    "full_name": dm["full_name"],
-                })
-                if not existing_contact:
-                    c_doc = {
-                        "company_id": company_id,
-                        "company_name": company_name,
-                        "full_name": dm["full_name"],
-                        "designation": dm["designation"],
-                        "source": "company_leadership_enrichment",
-                        "verification_status": "published",
-                        "email": dm.get("email"),
-                        "phone": dm.get("phone"),
-                        "linkedin_url": dm.get("linkedin_url"),
-                        "created_at": now,
-                        "updated_at": now,
-                    }
-                    ins_res = await db.contacts.insert_one(c_doc)
-                    c_doc["_id"] = str(ins_res.inserted_id)
-                    created_contacts.append(c_doc)
-            except Exception as ce:
-                logger.debug("[COMPANY_ENRICH] Error creating decision-maker contact: %s", ce)
 
         logger.info(
             "[COMPANY_ENRICH] Completed for %s: %d channels (%d emails, %d phones, %d forms, %d socials), %d decision-makers",

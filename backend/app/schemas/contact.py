@@ -30,6 +30,7 @@ class ContactCreate(BaseModel):
     department: Optional[str] = None
     company_id: Optional[str] = None
     company_name: Optional[str] = None
+    associated_companies: List[Dict[str, Any]] = []
     email: Optional[str] = None
     phone: Optional[str] = None
     linkedin_url: Optional[str] = None
@@ -48,6 +49,7 @@ class ContactUpdate(BaseModel):
     department: Optional[str] = None
     company_id: Optional[str] = None
     company_name: Optional[str] = None
+    associated_companies: List[Dict[str, Any]] = []
     email: Optional[str] = None
     phone: Optional[str] = None
     linkedin_url: Optional[str] = None
@@ -72,6 +74,7 @@ class ContactResponse(BaseModel):
     department: Optional[str] = None
     company_id: Optional[str] = None
     company_name: Optional[str] = None
+    associated_companies: List[Dict[str, Any]] = []
     email: Optional[str] = None
     phone: Optional[str] = None
     linkedin_url: Optional[str] = None
