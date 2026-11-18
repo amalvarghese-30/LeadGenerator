@@ -429,3 +429,59 @@ class ContactEnrichmentService:
 
         tasks = [_run(cid) for cid in contact_ids]
         return await asyncio.gather(*tasks, return_exceptions=False)
+
+    async def enrich_person_profile(
+        self, profile_data: Dict[str, Any], db: Optional[AsyncIOMotorDatabase] = None
+    ) -> Dict[str, Any]:
+        """
+        Enriches an individual person profile via non-blocking targeted public queries.
+        Discovers missing social profiles (LinkedIn, X/Twitter, etc.) and personal websites.
+        """
+        if not profile_data or not profile_data.get("person_name"):
+            return profile_data
+
+        enriched = dict(profile_data)
+        name = enriched["person_name"]
+        company = enriched.get("company_name") or ""
+        designation = enriched.get("designation") or ""
+
+        socials = list(enriched.get("social_profiles") or [])
+        known_platforms = {sp.get("platform") for sp in socials if sp.get("platform")}
+        seen_urls = {sp.get("url") for sp in socials if sp.get("url")}
+
+        # Check if missing key platforms
+        queries = []
+        if "linkedin" not in known_platforms:
+            queries.append(f'site:linkedin.com/in/ "{name}" {company}'.strip())
+        if "twitter" not in known_platforms and "x" not in known_platforms:
+            queries.append(f'site:twitter.com OR site:x.com "{name}" {company}'.strip())
+
+        # Also search for public contact email or portfolio if not known
+        if not enriched.get("public_emails"):
+            queries.append(f'"{name}" {company} email contact'.strip())
+
+        from app.discovery.social_discovery import SocialDiscovery
+        soc_disc = SocialDiscovery()
+
+        for q in queries[:2]:  # Limit to 2 targeted queries to respect rate limits
+            try:
+                results = await asyncio.to_thread(self.social_discovery.searcher.search, q, "wt-wt", 3)
+                for r in results:
+                    u = r.get("url")
+                    if not u:
+                        continue
+                    cl = soc_disc._classify_url(u)
+                    if cl and cl["url"] not in seen_urls:
+                        seen_urls.add(cl["url"])
+                        socials.append({
+                            **cl,
+                            "source_url": r.get("url"),
+                            "extraction_method": "ddgs_targeted_search",
+                            "verification_status": "discovered_via_search",
+                            "confidence": 0.85,
+                        })
+            except Exception as e:
+                logger.debug("Person profile enrichment query failed for %s: %s", q, e)
+
+        enriched["social_profiles"] = socials
+        return enriched

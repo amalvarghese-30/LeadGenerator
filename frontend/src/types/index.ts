@@ -231,10 +231,82 @@ export interface CrawlJob {
   }>;
 
   discovery_stats?: Record<string, number>;
+  job_type?: 'full_research' | 'person_profile';
+  report_mode?: 'provider' | 'person' | 'hybrid';
+  person_profile?: PersonProfile;
 
   created_at: string;
   started_at?: string;
   completed_at?: string;
+}
+
+export interface PersonSocialProfile {
+  platform: string;
+  url: string;
+  handle?: string;
+  source_url?: string;
+  extraction_method?: string;
+  verification_status?: string;
+  confidence?: number;
+}
+
+export interface AssociatedWebsite {
+  url: string;
+  label: string;
+  source: string;
+}
+
+export interface PersonProfile {
+  person_name: string;
+  designation?: string;
+  company_name?: string;
+  location?: string;
+  bio_summary?: string;
+  social_profiles?: PersonSocialProfile[];
+  public_emails?: string[];
+  public_phones?: string[];
+  associated_websites?: AssociatedWebsite[];
+  source_url?: string;
+  name_source?: string;
+  designation_source?: string;
+  company_source?: string;
+  confidence_score?: number;
+  confidence_reasons?: string[];
+  page_category?: string;
+}
+
+export interface PageDiagnostic {
+  url: string;
+  is_person_profile: boolean;
+  person_confidence: number;
+  detection_reason: string;
+  emails_found: number;
+  socials_found: number;
+  status: string;
+}
+
+export interface ResearchReport {
+  id?: string;
+  job_id: string;
+  provider_id?: string;
+  starting_url: string;
+  job_type?: 'full_research' | 'person_profile';
+  report_mode?: 'provider' | 'person' | 'hybrid';
+  status: string;
+  pages_discovered: number;
+  pages_processed: number;
+  pages_failed: number;
+  references_found: number;
+  person_profile?: PersonProfile;
+  person_profiles?: PersonProfile[];
+  page_diagnostics?: PageDiagnostic[];
+  data_quality_metrics?: Record<string, any>;
+  enrichment_summary?: Record<string, any>;
+  rejected_candidates?: Array<any>;
+  social_media_profiles?: Record<string, string[]>;
+  public_emails_discovered?: string[];
+  failed_urls?: Array<{ url: string; error?: string }>;
+  generated_at?: string;
 }
 
 export interface PaginatedResponse<T> {

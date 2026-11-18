@@ -50,6 +50,7 @@ async def search_providers_route(
 async def research_provider_route(
     provider_id: str,
     page_limit: Optional[int] = Query(None, ge=1, le=100),
+    job_type: Optional[str] = Query("full_research"),
     db: AsyncIOMotorDatabase = Depends(get_db),
     user: dict = Depends(get_current_user),
 ):
@@ -68,11 +69,17 @@ async def research_provider_route(
     if active:
         return _fmt_job(active)
 
+    eff_job_type = job_type or "full_research"
+    if eff_job_type == "full_research" and target_url:
+        path_l = target_url.lower()
+        if any(seg in path_l for seg in ["/wiki/", "/person/", "/profile/", "/people/", "/author/", "/leadership/", "/executive/"]):
+            eff_job_type = "person_profile"
+
     now = datetime.now(timezone.utc)
     job_doc = {
         "provider_id": provider_id,
         "starting_url": target_url,
-        "job_type": "full_research",
+        "job_type": eff_job_type,
         "max_pages": page_limit or 30,
         "status": "pending",
         "current_stage": "queued",

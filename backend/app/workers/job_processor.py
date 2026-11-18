@@ -18,6 +18,7 @@ from app.database.connection import connect_to_mongo, close_mongo_connection, ge
 from app.discovery.discovery_manager import DiscoveryManager
 from app.crawler.crawler_manager import CrawlerManager
 from app.extraction.client_classifier import ClientClassifier
+from app.extraction.person_profile_extractor import PersonProfileExtractor
 from app.crm.reference_service import ReferenceService
 from app.crm.contact_service import ContactService
 from app.crm.company_service import CompanyService
@@ -54,6 +55,7 @@ class JobProcessor:
         self.discovery_manager = DiscoveryManager(max_pages=MAX_PAGES_PER_JOB)
         self.crawler_manager = CrawlerManager(max_pages=MAX_PAGES_PER_JOB)
         self.client_classifier = ClientClassifier()
+        self.person_extractor = PersonProfileExtractor()
         self.enrichment_service = ContactEnrichmentService()
         self.running = True
 
@@ -119,8 +121,16 @@ class JobProcessor:
         job_id = str(job["_id"])
         provider_id = job.get("provider_id")
         start_url = job.get("starting_url") or job.get("target_url")
+        job_type = job.get("job_type") or "full_research"
 
-        logger.info("[JOB] Processing %s | provider=%s | url=%s", job_id, provider_id, start_url)
+        # Auto-detect person profile workflow if URL contains biographical or person profile paths
+        if job_type == "full_research" and start_url:
+            path_l = start_url.lower()
+            if any(seg in path_l for seg in ["/wiki/", "/person/", "/profile/", "/people/", "/author/", "/leadership/", "/executive/"]):
+                job_type = "person_profile"
+                logger.info("[JOB] Auto-detected person profile research workflow for %s", start_url)
+
+        logger.info("[JOB] Processing %s | type=%s | provider=%s | url=%s", job_id, job_type, provider_id, start_url)
 
         if not start_url:
             await self._fail(db, job_id, _err("startup", "missing starting_url", err_type="config"))
@@ -313,6 +323,8 @@ class JobProcessor:
         confidence_bands = {"high": 0, "medium": 0, "low": 0}
         rejected_sample: List[Dict[str, Any]] = []
         all_job_contact_ids: List[str] = []
+        discovered_person_profiles: List[Dict[str, Any]] = []
+        page_diagnostics: List[Dict[str, Any]] = []
 
         for page in crawled_pages:
             # Check cancellation between page extractions
@@ -323,6 +335,34 @@ class JobProcessor:
             if page.get("status") != "success":
                 continue
             pages_analysed += 1
+            page_url = page.get("url") or ""
+
+            # Workflow B: Person Profile Extraction
+            try:
+                is_person, p_conf, p_reason = self.person_extractor.is_person_profile_page(page)
+                if is_person or job_type == "person_profile":
+                    p_prof = self.person_extractor.extract_profile(page)
+                    if p_prof and p_prof.get("person_name"):
+                        if not any(dp["person_name"].lower() == p_prof["person_name"].lower() for dp in discovered_person_profiles):
+                            discovered_person_profiles.append(p_prof)
+                            await log_job_event(
+                                db, job_id, "extracting", "success", "person_profile_extracted",
+                                f"Identified person profile: {p_prof['person_name']} ({p_prof.get('designation')}) [conf={p_prof.get('confidence_score')}]",
+                                url=page_url,
+                                metadata={"person_name": p_prof["person_name"], "confidence": p_prof.get("confidence_score")}
+                            )
+                page_diagnostics.append({
+                    "url": page_url,
+                    "is_person_profile": is_person,
+                    "person_confidence": p_conf,
+                    "detection_reason": p_reason,
+                    "emails_found": len(page.get("public_emails") or []),
+                    "socials_found": len(page.get("social_profiles") or []),
+                    "status": "analyzed"
+                })
+            except Exception as pe_err:
+                logger.warning("[PERSON_EXTRACTION] error for %s: %s", page_url, pe_err)
+
             try:
                 refs, rejected, page_meta = await self.client_classifier.process_page_detailed(page, provider_id)
             except Exception as e:
@@ -502,6 +542,122 @@ class JobProcessor:
                     logger.exception("[CRM] error creating record")
                     warnings.append(_err("crm", str(e), url=ref.get("source_url"), err_type="crm"))
 
+        # Process Discovered Person Profiles into CRM (Workflow B)
+        for p_profile in discovered_person_profiles:
+            try:
+                target_name = p_profile["person_name"]
+                p_comp_name = p_profile.get("company_name")
+                p_desig = p_profile.get("designation")
+                p_emails = p_profile.get("public_emails", [])
+                p_phones = p_profile.get("public_phones", [])
+                p_socials = p_profile.get("social_profiles", [])
+
+                p_company_id = None
+                if p_comp_name:
+                    comp_res = await company_service.create({
+                        "name": p_comp_name,
+                        "industry": "Professional Services",
+                    })
+                    p_company_id = comp_res.get("id")
+                    if comp_res.get("created", False):
+                        companies_created += 1
+                        await log_job_event(
+                            db, job_id, "extracting", "success", "new_crm_record_saved",
+                            f"Saved company CRM record: {p_comp_name}"
+                        )
+
+                prof_urls = {}
+                p_channels: List[Dict[str, Any]] = []
+                for soc in p_socials:
+                    plat = soc.get("platform", "").lower()
+                    s_url = soc.get("url")
+                    if s_url and plat:
+                        prof_urls[plat] = s_url
+                        p_channels.append({
+                            "type": "social",
+                            "scope": "person_direct_work",
+                            "value": s_url,
+                            "source_url": p_profile.get("source_url") or start_url,
+                            "source_type": soc.get("extraction_method") or "webpage",
+                            "evidence_quote": f"Discovered {plat} profile link",
+                            "syntax_valid": True,
+                            "source_verified": soc.get("verification_status") == "likely_official",
+                            "verification_status": soc.get("verification_status") or "published",
+                            "confidence": soc.get("confidence", 0.85),
+                        })
+
+                for em in p_emails:
+                    p_channels.append({
+                        "type": "email",
+                        "scope": "person_direct_work",
+                        "value": em,
+                        "source_url": p_profile.get("source_url") or start_url,
+                        "source_type": "webpage",
+                        "evidence_quote": "Discovered public email",
+                        "syntax_valid": True,
+                        "source_verified": True,
+                        "verification_status": "published",
+                        "confidence": 0.8,
+                    })
+
+                for ph in p_phones:
+                    p_channels.append({
+                        "type": "phone",
+                        "scope": "person_direct_work",
+                        "value": ph,
+                        "source_url": p_profile.get("source_url") or start_url,
+                        "source_type": "webpage",
+                        "evidence_quote": "Discovered public phone",
+                        "syntax_valid": True,
+                        "source_verified": True,
+                        "verification_status": "published",
+                        "confidence": 0.8,
+                    })
+
+                contact, was_new = await contact_service.create({
+                    "full_name": target_name,
+                    "designation": p_desig or "Executive / Profile",
+                    "company_id": p_company_id,
+                    "company_name": p_comp_name,
+                    "contact_verification_status": "discovered",
+                    "email": p_emails[0] if p_emails else None,
+                    "phone": p_phones[0] if p_phones else None,
+                    "business_contacts": {
+                        **({"email": p_emails[0]} if p_emails else {}),
+                        **({"phone": p_phones[0]} if p_phones else {}),
+                    },
+                    "professional_urls": prof_urls,
+                    "linkedin_url": prof_urls.get("linkedin"),
+                    "contact_channels": p_channels,
+                    "bio_summary": p_profile.get("bio_summary"),
+                })
+                contact_id = contact.get("id")
+                if contact_id and contact_id not in all_job_contact_ids:
+                    all_job_contact_ids.append(contact_id)
+                if was_new:
+                    contacts_created += 1
+                    await log_job_event(
+                        db, job_id, "extracting", "success", "contact_found",
+                        f"Discovered contact: {target_name}"
+                    )
+
+                if contact_id:
+                    lead_res = await lead_service.create(
+                        contact_id=contact_id,
+                        company_id=p_company_id,
+                        lead_source=provider_id or "website_intelligence",
+                        initial_stage="discovered",
+                    )
+                    if lead_res.get("created", False):
+                        leads_created += 1
+                        await log_job_event(
+                            db, job_id, "extracting", "success", "new_crm_record_saved",
+                            f"Generated new lead for {target_name}"
+                        )
+            except Exception as p_crm_err:
+                logger.exception("[CRM] Error creating person profile record: %s", p_crm_err)
+                warnings.append(_err("crm_person", str(p_crm_err), err_type="crm"))
+
         # Check cancellation before contact enrichment
         if await self.is_job_cancelled(db, job_id):
             await self._handle_cancellation(db, job_id, "pre-enrichment")
@@ -517,6 +673,15 @@ class JobProcessor:
             "contact_forms_found": 0,
             "no_public_contacts_found": 0,
         }
+
+        # Enrich discovered person profiles via targeted public search
+        for p_prof in discovered_person_profiles:
+            try:
+                enriched_p = await self.enrichment_service.enrich_person_profile(p_prof, db)
+                p_prof.update(enriched_p)
+            except Exception as e:
+                logger.warning("[ENRICHMENT] Person profile enrichment error: %s", e)
+
         if all_job_contact_ids:
             await self._stage(db, job_id, "enriching_contacts", 78)
             logger.info("[ENRICHMENT] Starting contact enrichment for %d contacts", len(all_job_contact_ids))
@@ -559,12 +724,24 @@ class JobProcessor:
             "enrichment_metrics": enrichment_metrics,
         }
 
+        # Determine report_mode
+        report_mode = "provider"
+        if job_type == "person_profile" or (discovered_person_profiles and valid_client_references == 0):
+            report_mode = "person"
+        elif discovered_person_profiles and valid_client_references > 0:
+            report_mode = "hybrid"
+
+        primary_profile = discovered_person_profiles[0] if discovered_person_profiles else None
+
         # ---------- Stage 5: Report ----------
         await self._stage(db, job_id, "generating_report", 90)
         try:
             await self._generate_report(
                 db, job_id, provider_id, start_url, crawled_pages,
-                valid_client_references, data_quality_metrics, rejected_sample
+                valid_client_references, data_quality_metrics, rejected_sample,
+                job_type=job_type,
+                discovered_person_profiles=discovered_person_profiles,
+                page_diagnostics=page_diagnostics
             )
             await log_job_event(db, job_id, "generating_report", "success", "report_generated", "Research report generated successfully")
         except Exception as e:
@@ -581,15 +758,18 @@ class JobProcessor:
         await self._finish(
             db, job_id, final_status, errors, warnings,
             valid_client_references, contacts_created, companies_created, leads_created,
-            data_quality_metrics
+            data_quality_metrics=data_quality_metrics,
+            job_type=job_type,
+            report_mode=report_mode,
+            person_profile=primary_profile
         )
         await log_job_event(
             db, job_id, "completed", "success", "job_completed",
             f"Research complete: {valid_client_references} refs, {contacts_created} contacts, {leads_created} leads"
         )
         logger.info(
-            "[JOB] %s done. refs=%d contacts=%d companies=%d leads=%d",
-            job_id, valid_client_references, contacts_created, companies_created, leads_created,
+            "[JOB] %s done. refs=%d contacts=%d companies=%d leads=%d mode=%s",
+            job_id, valid_client_references, contacts_created, companies_created, leads_created, report_mode
         )
 
     async def _stage(self, db, job_id: str, stage: str, progress: int):
@@ -603,7 +783,9 @@ class JobProcessor:
         )
 
     async def _finish(self, db, job_id, status, errors, warnings,
-                      refs, contacts, companies, leads, data_quality_metrics: Optional[Dict] = None):
+                      refs, contacts, companies, leads, data_quality_metrics: Optional[Dict] = None,
+                      job_type: str = "full_research", report_mode: str = "provider",
+                      person_profile: Optional[Dict] = None):
         now = datetime.now(timezone.utc)
         update_doc = {
             "status": status,
@@ -615,11 +797,15 @@ class JobProcessor:
             "contacts_created": contacts,
             "companies_created": companies,
             "leads_created": leads,
+            "job_type": job_type,
+            "report_mode": report_mode,
             "lock_key": None,
             "locked_at": None,
             "completed_at": now,
             "updated_at": now,
         }
+        if person_profile:
+            update_doc["person_profile"] = person_profile
         if data_quality_metrics:
             update_doc["data_quality_metrics"] = data_quality_metrics
 
@@ -650,7 +836,10 @@ class JobProcessor:
     async def _generate_report(self, db, job_id, provider_id, start_url,
                                pages: List[Dict], references_found: int,
                                data_quality_metrics: Optional[Dict] = None,
-                               rejected_sample: Optional[List[Dict]] = None):
+                               rejected_sample: Optional[List[Dict]] = None,
+                               job_type: str = "full_research",
+                               discovered_person_profiles: Optional[List[Dict]] = None,
+                               page_diagnostics: Optional[List[Dict]] = None):
         success_pages = [p for p in pages if p.get("status") == "success"]
         failed_pages = [p for p in pages if p.get("status") == "failed"]
 
@@ -664,20 +853,47 @@ class JobProcessor:
                     if url not in socials[platform]:
                         socials[platform].append(url)
 
+        # Merge socials from discovered_person_profiles
+        for p_prof in (discovered_person_profiles or []):
+            for sp in (p_prof.get("social_profiles") or []):
+                platform = sp.get("platform")
+                url = sp.get("url")
+                if platform and url:
+                    socials.setdefault(platform, [])
+                    if url not in socials[platform]:
+                        socials[platform].append(url)
+
         emails = set()
         for p in success_pages:
             for e in (p.get("public_emails") or []):
                 emails.add(e)
+        for p_prof in (discovered_person_profiles or []):
+            for e in (p_prof.get("public_emails") or []):
+                emails.add(e)
+
+        # Determine report_mode
+        report_mode = "provider"
+        if job_type == "person_profile" or (discovered_person_profiles and references_found == 0):
+            report_mode = "person"
+        elif discovered_person_profiles and references_found > 0:
+            report_mode = "hybrid"
+
+        primary_profile = discovered_person_profiles[0] if discovered_person_profiles else None
 
         report = {
             "job_id": job_id,
             "provider_id": provider_id,
             "starting_url": start_url,
+            "job_type": job_type,
+            "report_mode": report_mode,
             "status": "completed",
             "pages_discovered": len(pages),
             "pages_processed": len(success_pages),
             "pages_failed": len(failed_pages),
             "references_found": references_found,
+            "person_profile": primary_profile,
+            "person_profiles": discovered_person_profiles or [],
+            "page_diagnostics": page_diagnostics or [],
             "data_quality_metrics": data_quality_metrics or {},
             "enrichment_summary": (data_quality_metrics or {}).get("enrichment_metrics", {}),
             "rejected_candidates": rejected_sample or [],

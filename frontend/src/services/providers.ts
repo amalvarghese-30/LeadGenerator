@@ -46,8 +46,16 @@ export const getProviderJobs = async (providerId: string): Promise<PaginatedResp
   return res.data;
 };
 
-export const startProviderResearch = async (providerId: string, pageLimit?: number): Promise<CrawlJob> => {
-  const url = pageLimit ? `/discovery/providers/${providerId}/research?page_limit=${pageLimit}` : `/discovery/providers/${providerId}/research`;
+export const startProviderResearch = async (
+  providerId: string,
+  pageLimit?: number,
+  jobType?: string
+): Promise<CrawlJob> => {
+  let url = `/discovery/providers/${providerId}/research`;
+  const params: string[] = [];
+  if (pageLimit) params.push(`page_limit=${pageLimit}`);
+  if (jobType) params.push(`job_type=${jobType}`);
+  if (params.length) url += `?${params.join('&')}`;
   const res = await api.post<CrawlJob>(url);
   return res.data;
 };

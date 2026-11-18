@@ -9,6 +9,10 @@ from pydantic import BaseModel
 from bs4 import BeautifulSoup
 
 EMAIL_REGEX = re.compile(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,7}\b')
+OBFUSCATED_EMAIL_REGEX = re.compile(
+    r'\b([A-Za-z0-9._%+-]+)\s*(?:\[at\]|\(at\)|\bat\b)\s*([A-Za-z0-9.-]+)\s*(?:\[dot\]|\(dot\)|\bdot\b|\.)\s*([A-Za-z]{2,7})\b',
+    re.IGNORECASE
+)
 
 GENERIC_LOCAL_PARTS = {
     "info", "contact", "hello", "office", "enquiry", "enquiries",
@@ -99,6 +103,22 @@ class PublicEmailExtractor:
                 evidence_quote=f"...{evidence}...",
                 confidence=0.8 if scope == "person_direct_work" else 0.65,
             ))
+
+        # 3. Obfuscated emails (e.g. user [at] example [dot] com)
+        for m in OBFUSCATED_EMAIL_REGEX.finditer(text):
+            reconstructed = f"{m.group(1)}@{m.group(2)}.{m.group(3)}".lower().strip()
+            if reconstructed not in seen_emails and not reconstructed.endswith((".png", ".jpg", ".webp")):
+                seen_emails.add(reconstructed)
+                raw_match_text = m.group(0)
+                scope = PublicEmailExtractor.classify_scope(reconstructed, target_person_name)
+                results.append(ExtractedEmail(
+                    value=reconstructed,
+                    scope=scope,
+                    source_url=source_url,
+                    source_type="obfuscated_text",
+                    evidence_quote=f"De-obfuscated from '{raw_match_text}'",
+                    confidence=0.75 if scope == "person_direct_work" else 0.6,
+                ))
 
         return results
 

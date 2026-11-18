@@ -298,31 +298,48 @@ class CrawlerManager:
         })
 
         # 5. Playwright fallback if content is thin
+        rendered = None
+        render_method = None
         if word_count < MIN_WORDS_FOR_JS_FALLBACK and self.enable_playwright:
             rendered = await self._playwright_render(final_url)
             if rendered and rendered.get("word_count", 0) > word_count:
-                result.update({
-                    "main_text": rendered["main_text"],
-                    "word_count": rendered["word_count"],
-                    "extraction_method": "playwright",
-                    "javascript_rendered": True,
-                    "page_title": rendered.get("title") or result["page_title"],
-                })
-                word_count = rendered["word_count"]
-                main_text = rendered["main_text"]
-            # 6. Optional Selenium fallback if Playwright fails or is disabled/unavailable
-            elif self.enable_selenium:
-                sel_rendered = await self._selenium_render(final_url)
-                if sel_rendered and sel_rendered.get("word_count", 0) > word_count:
-                    result.update({
-                        "main_text": sel_rendered["main_text"],
-                        "word_count": sel_rendered["word_count"],
-                        "extraction_method": "selenium",
-                        "javascript_rendered": True,
-                        "page_title": sel_rendered.get("title") or result["page_title"],
-                    })
-                    word_count = sel_rendered["word_count"]
-                    main_text = sel_rendered["main_text"]
+                render_method = "playwright"
+
+        # 6. Optional Selenium fallback if Playwright fails or is disabled/unavailable
+        if (not rendered or rendered.get("word_count", 0) <= word_count) and word_count < MIN_WORDS_FOR_JS_FALLBACK and self.enable_selenium:
+            sel_rendered = await self._selenium_render(final_url)
+            if sel_rendered and sel_rendered.get("word_count", 0) > word_count:
+                rendered = sel_rendered
+                render_method = "selenium"
+
+        if rendered and rendered.get("word_count", 0) > word_count:
+            # Merge contacts and socials discovered in rendered DOM
+            merged_emails = list(dict.fromkeys(result.get("public_emails", []) + rendered.get("public_emails", [])))
+            merged_phones = list(dict.fromkeys(result.get("public_phones", []) + rendered.get("public_phones", [])))
+
+            seen_soc_urls = {sp.get("url") for sp in result.get("social_profiles", []) if sp.get("url")}
+            merged_socials = list(result.get("social_profiles", []))
+            for sp in rendered.get("social_profiles", []):
+                if sp.get("url") and sp["url"] not in seen_soc_urls:
+                    seen_soc_urls.add(sp["url"])
+                    merged_socials.append(sp)
+
+            result.update({
+                "main_text": rendered["main_text"],
+                "word_count": rendered["word_count"],
+                "extraction_method": render_method,
+                "javascript_rendered": True,
+                "page_title": rendered.get("title") or result["page_title"],
+                "h1": rendered.get("h1") or result.get("h1", ""),
+                "h2s": rendered.get("h2s") or result.get("h2s", []),
+                "public_emails": merged_emails,
+                "public_phones": merged_phones,
+                "social_profiles": merged_socials,
+                "schema_persons": result.get("schema_persons", []) + rendered.get("schema_persons", []),
+                "schema_organizations": result.get("schema_organizations", []) + rendered.get("schema_organizations", []),
+            })
+            word_count = rendered["word_count"]
+            main_text = rendered["main_text"]
 
         # Duplicate content check
         if main_text:
@@ -360,6 +377,13 @@ class CrawlerManager:
                 "main_text": content.get("main_text", ""),
                 "word_count": int(content.get("word_count", 0)),
                 "title": title or content.get("title", ""),
+                "h1": content.get("h1", ""),
+                "h2s": content.get("h2s", []),
+                "public_emails": content.get("public_emails", []),
+                "public_phones": content.get("public_phones", []),
+                "social_profiles": content.get("social_profiles", []),
+                "schema_persons": content.get("schema_persons", []),
+                "schema_organizations": content.get("schema_organizations", []),
             }
         except Exception as e:
             logger.debug("Playwright render unavailable/failed for %s: %s", url, e)
@@ -395,6 +419,13 @@ class CrawlerManager:
                 "main_text": content.get("main_text", ""),
                 "word_count": int(content.get("word_count", 0)),
                 "title": title or content.get("title", ""),
+                "h1": content.get("h1", ""),
+                "h2s": content.get("h2s", []),
+                "public_emails": content.get("public_emails", []),
+                "public_phones": content.get("public_phones", []),
+                "social_profiles": content.get("social_profiles", []),
+                "schema_persons": content.get("schema_persons", []),
+                "schema_organizations": content.get("schema_organizations", []),
             }
         except Exception as e:
             logger.debug("Selenium render unavailable/failed for %s: %s", url, e)

@@ -18,6 +18,10 @@ from app.discovery.social_discovery import SocialDiscovery
 logger = logging.getLogger(__name__)
 
 EMAIL_REGEX = re.compile(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,7}\b')
+OBFUSCATED_EMAIL_REGEX = re.compile(
+    r'\b([A-Za-z0-9._%+-]+)\s*(?:\[at\]|\(at\)|\bat\b)\s*([A-Za-z0-9.-]+)\s*(?:\[dot\]|\(dot\)|\bdot\b|\.)\s*([A-Za-z]{2,7})\b',
+    re.IGNORECASE
+)
 PHONE_REGEX = re.compile(r'(?:\+?\d{1,3}[-.\s]?)?\(?\d{2,4}\)?[-.\s]?\d{3,4}[-.\s]?\d{3,4}\b')
 
 
@@ -195,7 +199,10 @@ class ContentExtractor:
 
         # 6. Publicly published business emails
         raw_text_emails = EMAIL_REGEX.findall(capped_text)
-        all_candidate_emails = list(set(raw_text_emails + mailto_emails + schema_emails))
+        obfuscated_emails = []
+        for m in OBFUSCATED_EMAIL_REGEX.finditer(capped_text):
+            obfuscated_emails.append(f"{m.group(1)}@{m.group(2)}.{m.group(3)}".lower().strip())
+        all_candidate_emails = list(set(raw_text_emails + obfuscated_emails + mailto_emails + schema_emails))
         valid_emails = []
         for e in all_candidate_emails:
             e_clean = e.strip().rstrip(".,;:)")

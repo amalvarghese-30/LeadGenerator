@@ -44,6 +44,7 @@ export const WebsiteIntelligence: React.FC = () => {
   // Launcher state
   const [targetUrl, setTargetUrl] = useState('https://theperson.in/');
   const [pageLimit, setPageLimit] = useState(30);
+  const [workflowMode, setWorkflowMode] = useState<'full_research' | 'person_profile'>('full_research');
   const [isStarting, setIsStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -378,6 +379,14 @@ export const WebsiteIntelligence: React.FC = () => {
     }
   }, [events]);
 
+  const handleUrlChange = (val: string) => {
+    setTargetUrl(val);
+    const low = val.toLowerCase();
+    if (low.includes('/wiki/') || low.includes('/person/') || low.includes('/profile/') || low.includes('/author/') || low.includes('/people/')) {
+      setWorkflowMode('person_profile');
+    }
+  };
+
   const handleStartResearch = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!targetUrl.trim()) return;
@@ -397,7 +406,7 @@ export const WebsiteIntelligence: React.FC = () => {
       });
       const providerId = (provider as any).id || (provider as any)._id;
 
-      const createdJob = await startProviderResearch(providerId, pageLimit);
+      const createdJob = await startProviderResearch(providerId, pageLimit, workflowMode);
       const jId = createdJob.id || (createdJob as any)._id;
       setActiveJobId(jId);
       setJob(createdJob);
@@ -451,13 +460,14 @@ export const WebsiteIntelligence: React.FC = () => {
   };
 
   const getStageLabel = (stage?: string) => {
+    const isPerson = job?.job_type === 'person_profile' || workflowMode === 'person_profile';
     switch (stage) {
       case 'queued': return 'Queued';
-      case 'discovering': return 'Discovering Target URLs';
+      case 'discovering': return 'Discovering Profile & Page URLs';
       case 'crawling': return 'Crawling Webpages';
-      case 'extracting': return 'Extracting Client References';
-      case 'enriching_contacts': return 'Enriching Public Channels';
-      case 'generating_report': return 'Synthesizing Report';
+      case 'extracting': return isPerson ? 'Extracting Person Profile & Identity' : 'Extracting Client References';
+      case 'enriching_contacts': return 'Enriching Public Channels & Socials';
+      case 'generating_report': return 'Synthesizing Intelligence Report';
       case 'completed': return 'Completed';
       case 'cancelled': return 'Cancelled';
       case 'failed': return 'Failed';
@@ -480,15 +490,48 @@ export const WebsiteIntelligence: React.FC = () => {
       {/* Target Launch Card */}
       <Card className="p-5">
         <form onSubmit={handleStartResearch} className="space-y-4">
+          {/* Workflow Selection Tabs */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 border-b border-slate-100">
+            <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">
+              Select Research Workflow:
+            </span>
+            <div className="flex items-center bg-slate-100 p-1 rounded-xl border border-slate-200">
+              <button
+                type="button"
+                onClick={() => setWorkflowMode('full_research')}
+                disabled={Boolean(activeJobId && !isJobTerminal)}
+                className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all ${
+                  workflowMode === 'full_research'
+                    ? 'bg-white text-indigo-700 shadow-sm'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                🏢 Provider Research (Workflow A)
+              </button>
+              <button
+                type="button"
+                onClick={() => setWorkflowMode('person_profile')}
+                disabled={Boolean(activeJobId && !isJobTerminal)}
+                className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all ${
+                  workflowMode === 'person_profile'
+                    ? 'bg-white text-blue-700 shadow-sm'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                👤 Person Profile Research (Workflow B)
+              </button>
+            </div>
+          </div>
+
           <div className="grid grid-cols-1 sm:grid-cols-12 gap-3.5 items-end">
             <div className="sm:col-span-8">
               <Input
-                label="Target Provider Website URL *"
+                label={workflowMode === 'person_profile' ? "Target Person Profile / Biography URL *" : "Target Provider Website URL *"}
                 type="url"
                 required
                 value={targetUrl}
-                onChange={(e) => setTargetUrl(e.target.value)}
-                placeholder="https://theperson.in/"
+                onChange={(e) => handleUrlChange(e.target.value)}
+                placeholder={workflowMode === 'person_profile' ? "https://wikipoint.org/wiki/Beenu_Kumar_Taneja" : "https://theperson.in/"}
                 disabled={Boolean(activeJobId && !isJobTerminal)}
               />
             </div>
