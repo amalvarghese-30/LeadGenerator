@@ -72,3 +72,41 @@ async def delete_company_route(
     success = await delete_company(db, company_id)
     if not success:
         raise HTTPException(status_code=404, detail="Company not found")
+
+@router.get("/{company_id}/contact-channels")
+async def get_company_contact_channels_route(
+    company_id: str,
+    db: AsyncIOMotorDatabase = Depends(get_db),
+    _user: dict = Depends(get_current_user),
+):
+    doc = await get_company(db, company_id)
+    if not doc:
+        raise HTTPException(status_code=404, detail="Company not found")
+    return {
+        "company_id": company_id,
+        "company_name": doc.get("name"),
+        "website": doc.get("website"),
+        "enrichment_status": doc.get("enrichment_status", "pending"),
+        "last_enriched_at": doc.get("last_enriched_at"),
+        "public_contact": doc.get("public_contact", {}),
+        "public_contact_channels": doc.get("public_contact_channels", []),
+        "social_profiles": doc.get("social_profiles", {}),
+    }
+
+@router.post("/{company_id}/enrich")
+async def enrich_company_route(
+    company_id: str,
+    db: AsyncIOMotorDatabase = Depends(get_db),
+    _user: dict = Depends(get_current_user),
+):
+    from app.enrichment.company_enrichment_service import CompanyEnrichmentService
+    doc = await get_company(db, company_id)
+    if not doc:
+        raise HTTPException(status_code=404, detail="Company not found")
+    
+    service = CompanyEnrichmentService()
+    enriched_doc = await service.enrich_company(db, company_id)
+    return {
+        "success": bool(enriched_doc),
+        "company": _fmt(enriched_doc or doc),
+    }

@@ -95,6 +95,33 @@ async def create_company_with_status(
         if not existing.get("linkedin_url") and linkedin:
             updates["linkedin_url"] = linkedin
 
+        # Merge public contact info if missing
+        curr_contact = dict(existing.get("public_contact") or {})
+        new_contact = data.get("public_contact") or {}
+        merged_contact = {**new_contact, **curr_contact}
+        if merged_contact != curr_contact:
+            updates["public_contact"] = merged_contact
+
+        # Merge public_contact_channels without duplicates
+        existing_channels = existing.get("public_contact_channels") or []
+        existing_vals = {c.get("value") for c in existing_channels if isinstance(c, dict) and c.get("value")}
+        new_channels = [c for c in (data.get("public_contact_channels") or []) if isinstance(c, dict) and c.get("value") not in existing_vals]
+        if new_channels:
+            updates["public_contact_channels"] = existing_channels + new_channels
+
+        # Merge social_profiles without duplicates
+        existing_socials = existing.get("social_profiles") or []
+        existing_s_urls = {s.get("url") for s in existing_socials if isinstance(s, dict) and s.get("url")}
+        new_socials = [s for s in (data.get("social_profiles") or []) if isinstance(s, dict) and s.get("url") not in existing_s_urls]
+        if new_socials:
+            updates["social_profiles"] = existing_socials + new_socials
+
+        # Merge source_references
+        existing_refs = set(existing.get("source_references") or [])
+        new_refs = [r for r in (data.get("source_references") or []) if r and r not in existing_refs]
+        if new_refs:
+            updates["source_references"] = list(existing_refs.union(new_refs))
+
         if updates:
             updates["updated_at"] = now
             await db.companies.update_one({"_id": existing["_id"]}, {"$set": updates})
@@ -108,7 +135,14 @@ async def create_company_with_status(
         "name": raw_name,
         "normalized_name": norm_name,
         "domain": domain,
+        "website": website,
         "dedup_key": dedup_key,
+        "public_contact": data.get("public_contact") or {},
+        "public_contact_channels": data.get("public_contact_channels") or [],
+        "social_profiles": data.get("social_profiles") or [],
+        "enrichment_status": data.get("enrichment_status", "pending"),
+        "enrichment_attempts": data.get("enrichment_attempts", 0),
+        "source_references": data.get("source_references") or [],
         "verification_status": data.get("verification_status", "unverified"),
         "created_by": user_id,
         "created_at": now,

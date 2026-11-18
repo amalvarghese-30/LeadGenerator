@@ -12,9 +12,27 @@ def _doc_to_dict(doc: Dict) -> Dict:
 
 async def create_reference(db: AsyncIOMotorDatabase, data: Dict, user_id: Optional[str] = None) -> Dict:
     now = datetime.now(timezone.utc)
+    client_name = data.get("company_name") or data.get("client_name") or "Unknown Client"
+    client_website = data.get("company_website") or data.get("client_website")
+    source_url = data.get("source_url") or data.get("evidence_url")
+    evidence_quote = data.get("evidence_quote") or data.get("evidence_snippet")
+    conf = float(data.get("confidence") or data.get("confidence_score") or 0.8)
+
     doc = {
         **data,
-        "verification_status": "unverified",
+        "client_name": client_name,
+        "company_name": data.get("company_name") or client_name,
+        "client_website": client_website,
+        "company_website": data.get("company_website") or client_website,
+        "source_url": source_url,
+        "evidence_url": source_url,
+        "evidence_snippet": evidence_quote,
+        "evidence_quote": evidence_quote,
+        "confidence": conf,
+        "confidence_score": conf,
+        "relationship_type": data.get("relationship_type") or "client_portfolio_reference",
+        "reference_type": data.get("reference_type") or "client_portfolio_reference",
+        "verification_status": data.get("verification_status", "pending_review"),
         "created_by": user_id,
         "created_at": now,
         "updated_at": now,

@@ -1,4 +1,4 @@
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 from pydantic import BaseModel
 
 
@@ -14,6 +14,8 @@ class CompanyCreate(BaseModel):
     employee_count: Optional[str] = None
     revenue_range: Optional[str] = None
     public_contact: Dict[str, str] = {}
+    public_contact_channels: List[Dict[str, Any]] = []
+    social_profiles: List[Dict[str, Any]] = []
     description: Optional[str] = None
     tags: List[str] = []
     notes: Optional[str] = None
@@ -30,6 +32,9 @@ class CompanyUpdate(BaseModel):
     employee_count: Optional[str] = None
     revenue_range: Optional[str] = None
     public_contact: Optional[Dict[str, str]] = None
+    public_contact_channels: Optional[List[Dict[str, Any]]] = None
+    social_profiles: Optional[List[Dict[str, Any]]] = None
+    enrichment_status: Optional[str] = None
     description: Optional[str] = None
     verification_status: Optional[str] = None
     tags: Optional[List[str]] = None
@@ -49,6 +54,12 @@ class CompanyResponse(BaseModel):
     employee_count: Optional[str] = None
     revenue_range: Optional[str] = None
     public_contact: Dict[str, str] = {}
+    public_contact_channels: List[Dict[str, Any]] = []
+    social_profiles: List[Dict[str, Any]] = []
+    enrichment_status: str = "pending"
+    enrichment_attempts: int = 0
+    last_enriched_at: Optional[str] = None
+    source_references: List[str] = []
     description: Optional[str] = None
     verification_status: str
     tags: List[str] = []
