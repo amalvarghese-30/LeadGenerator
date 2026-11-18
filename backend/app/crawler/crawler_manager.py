@@ -29,7 +29,7 @@ from app.discovery.robots import RobotsChecker
 from app.crawler.content_extractor import ContentExtractor
 from app.services.rate_limit_service import rate_limit_service
 from app.utils.job_logger import log_job_event
-from app.utils.http_client import get_stealth_headers, is_cloudflare_or_blocked
+from app.utils.http_client import get_stealth_headers, is_cloudflare_or_blocked, HAS_HTTP2
 
 logger = logging.getLogger(__name__)
 
@@ -174,7 +174,7 @@ class CrawlerManager:
                     timeout=self.timeout,
                     follow_redirects=True,
                     headers=headers,
-                    http2=True,
+                    http2=HAS_HTTP2,
                     limits=httpx.Limits(max_connections=10, max_keepalive_connections=5),
                 ) as client:
                     resp = await client.get(url)
@@ -475,9 +475,11 @@ class CrawlerManager:
         cancellation_check: Optional[Callable[[], Awaitable[bool]]] = None,
         is_cancelled_fn: Optional[Callable[[], Awaitable[bool]]] = None,
         progress_callback: Optional[Callable[[int, int], Awaitable[None]]] = None,
+        max_pages: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
         results: List[Dict[str, Any]] = []
-        urls_to_crawl = urls[:self.max_pages]
+        effective_max = max_pages if max_pages is not None else self.max_pages
+        urls_to_crawl = urls[:effective_max]
         total = len(urls_to_crawl)
         cancel_check = is_cancelled_fn or cancellation_check
 

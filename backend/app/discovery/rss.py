@@ -6,7 +6,7 @@ from typing import List, Dict, Optional
 import logging
 from urllib.parse import urljoin
 
-from app.utils.http_client import get_stealth_headers
+from app.utils.http_client import get_stealth_headers, HAS_HTTP2
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +48,7 @@ class RSSDiscovery:
         # 2. If no feeds found in HTML, try common paths with stealth headers
         if not feeds:
             headers = get_stealth_headers(url=base_url)
-            async with httpx.AsyncClient(timeout=10, follow_redirects=True, headers=headers, http2=True) as client:
+            async with httpx.AsyncClient(timeout=10, follow_redirects=True, headers=headers, http2=HAS_HTTP2) as client:
                 for path in COMMON_FEED_PATHS:
                     url = base + path
                     if url in seen:
@@ -67,7 +67,7 @@ class RSSDiscovery:
         if not feeds and not homepage_html:
             try:
                 headers = get_stealth_headers(url=base_url)
-                async with httpx.AsyncClient(timeout=10, follow_redirects=True, headers=headers, http2=True) as client:
+                async with httpx.AsyncClient(timeout=10, follow_redirects=True, headers=headers, http2=HAS_HTTP2) as client:
                     resp = await client.get(base_url)
                 if resp.status_code == 200 and "text/html" in resp.headers.get("content-type", ""):
                     soup = BeautifulSoup(resp.text, "lxml")
@@ -88,7 +88,7 @@ class RSSDiscovery:
         """Parse feed URL into list of: {url, source, published, title, description}"""
         try:
             headers = get_stealth_headers(url=feed_url)
-            async with httpx.AsyncClient(timeout=15, follow_redirects=True, headers=headers, http2=True) as client:
+            async with httpx.AsyncClient(timeout=15, follow_redirects=True, headers=headers, http2=HAS_HTTP2) as client:
                 resp = await client.get(feed_url)
 
             if resp.status_code != 200:

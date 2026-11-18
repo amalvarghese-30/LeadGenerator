@@ -6,7 +6,7 @@ from typing import Optional, List
 import logging
 import io
 
-from app.utils.http_client import get_stealth_headers
+from app.utils.http_client import get_stealth_headers, HAS_HTTP2
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +29,7 @@ class RobotsChecker:
         robots_url = urljoin(base_url.rstrip("/") + "/", "robots.txt")
         try:
             headers = get_stealth_headers(url=robots_url)
-            async with httpx.AsyncClient(timeout=10, follow_redirects=True, http2=True) as client:
+            async with httpx.AsyncClient(timeout=10, follow_redirects=True, http2=HAS_HTTP2) as client:
                 resp = await client.get(robots_url, headers=headers)
             if resp.status_code == 200:
                 content = resp.text
