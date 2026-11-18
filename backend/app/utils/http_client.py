@@ -7,6 +7,12 @@ import random
 from typing import Dict, Optional, Tuple
 import httpx
 
+try:
+    import h2  # noqa: F401
+    HAS_HTTP2 = True
+except ImportError:
+    HAS_HTTP2 = False
+
 CHROME_PROFILES = [
     {
         "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
@@ -96,10 +102,11 @@ def create_stealth_client(timeout: float = 15.0, **kwargs) -> httpx.AsyncClient:
     redirects, and stealth headers.
     """
     headers = kwargs.pop("headers", None) or get_stealth_headers()
+    http2 = kwargs.pop("http2", HAS_HTTP2)
     return httpx.AsyncClient(
         headers=headers,
         timeout=timeout,
         follow_redirects=True,
-        http2=True,
+        http2=http2,
         **kwargs
     )

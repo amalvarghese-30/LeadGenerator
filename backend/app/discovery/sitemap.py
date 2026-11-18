@@ -8,7 +8,7 @@ import logging
 from datetime import datetime
 from urllib.parse import urljoin, urlparse
 
-from app.utils.http_client import get_stealth_headers
+from app.utils.http_client import get_stealth_headers, HAS_HTTP2
 
 logger = logging.getLogger(__name__)
 
@@ -83,7 +83,7 @@ class SitemapParser:
 
         try:
             headers = get_stealth_headers(url=url)
-            async with httpx.AsyncClient(timeout=self.timeout, follow_redirects=True, http2=True) as client:
+            async with httpx.AsyncClient(timeout=self.timeout, follow_redirects=True, http2=HAS_HTTP2) as client:
                 resp = await client.get(url, headers=headers)
 
             if resp.status_code != 200:

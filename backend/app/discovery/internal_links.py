@@ -12,7 +12,7 @@ import httpx
 
 from app.discovery.url_normalizer import URLNormalizer
 from app.utils.ssrf_guard import is_safe_url
-from app.utils.http_client import get_stealth_headers
+from app.utils.http_client import get_stealth_headers, HAS_HTTP2
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +50,7 @@ class InternalLinkCrawler:
 
         headers = get_stealth_headers(url=start_url)
 
-        async with httpx.AsyncClient(timeout=self.timeout, follow_redirects=True, headers=headers, http2=True) as client:
+        async with httpx.AsyncClient(timeout=self.timeout, follow_redirects=True, headers=headers, http2=HAS_HTTP2) as client:
             while queue and len(visited) < self.max_pages:
                 current_url, depth, parent_url = queue.popleft()
                 norm_url = self.normalizer.normalize(current_url)
