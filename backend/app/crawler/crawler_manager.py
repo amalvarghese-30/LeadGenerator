@@ -126,9 +126,31 @@ class CrawlerManager:
             result["status"] = "skipped"
             return result
 
-        # Consult adaptive rate limit policy
-        policy = await rate_limit_service.get_domain_policy(url)
-        effective_delay = max(self.delay_seconds, policy.get("recommended_delay_seconds", 1.0))
+        # Consult adaptive rate limit policy and enforce delays
+        try:
+            policy = await rate_limit_service.get_domain_policy(url)
+        except Exception as e:
+            logger.warning("Failed to obtain rate policy for %s: %s", url, e)
+            policy = {"recommended_delay_seconds": 1.5, "is_in_cooldown": False}
+
+        # Check and enforce domain cooldown if active
+        if policy.get("is_in_cooldown"):
+            cooldown_until_str = policy.get("cooldown_until")
+            if cooldown_until_str:
+                try:
+                    cd_dt = datetime.fromisoformat(cooldown_until_str)
+                    now = datetime.now(timezone.utc)
+                    remaining = (cd_dt - now).total_seconds()
+                    if remaining > 0:
+                        wait_cd = min(remaining, 30.0)
+                        logger.info("Domain %s in cooldown until %s. Pausing %.1fs before crawl.", url, cooldown_until_str, wait_cd)
+                        await asyncio.sleep(wait_cd)
+                except Exception:
+                    pass
+
+        # Enforce pre-request domain interval delay
+        effective_delay = max(self.delay_seconds, float(policy.get("recommended_delay_seconds") or 1.0))
+        await asyncio.sleep(effective_delay)
 
         headers = {
             "User-Agent": self.user_agent,
@@ -161,15 +183,18 @@ class CrawlerManager:
                         headers=dict(resp.headers),
                     )
 
-                    # Handle 429 throttling
+                    # Handle 429 throttling with standard Retry-After parsing
                     if resp.status_code == 429 and attempt < max_retries:
+                        from app.services.rate_limit_service import HeaderAnalyzer
                         retry_after = 2
-                        if "retry-after" in resp.headers:
-                            try:
-                                retry_after = int(resp.headers["retry-after"])
-                            except ValueError:
-                                pass
-                        await asyncio.sleep(retry_after + random.uniform(0.1, 0.5))
+                        header_val = resp.headers.get("retry-after") or resp.headers.get("Retry-After")
+                        if header_val:
+                            parsed_sec = HeaderAnalyzer.parse_retry_after(header_val)
+                            if parsed_sec:
+                                retry_after = parsed_sec
+                        sleep_delay = min(retry_after + random.uniform(0.2, 0.6), 60.0)
+                        logger.warning("HTTP 429 for %s. Backing off for %.1fs (attempt %d/%d)", url, sleep_delay, attempt + 1, max_retries)
+                        await asyncio.sleep(sleep_delay)
                         continue
 
                     break
@@ -181,10 +206,18 @@ class CrawlerManager:
                 last_exception = e
                 if attempt < max_retries:
                     await asyncio.sleep(1.0 * (attempt + 1) + random.uniform(0.1, 0.3))
+            except httpx.ConnectError as e:
+                t_elapsed_ms = (time.time() - t0) * 1000
+                await rate_limit_service.record_request_metric(
+                    url, status_code=None, response_time_ms=t_elapsed_ms, error_type="connection_error"
+                )
+                last_exception = e
+                if attempt < max_retries:
+                    await asyncio.sleep(1.5 * (attempt + 1) + random.uniform(0.1, 0.3))
             except httpx.HTTPError as e:
                 t_elapsed_ms = (time.time() - t0) * 1000
                 await rate_limit_service.record_request_metric(
-                    url, status_code=None, response_time_ms=t_elapsed_ms, error_type="http_error"
+                    url, status_code=None, response_time_ms=t_elapsed_ms, error_type="network_error"
                 )
                 last_exception = e
                 break
@@ -387,6 +420,9 @@ class CrawlerManager:
         total = len(urls)
         results: List[Dict[str, Any]] = []
         counters = {"attempted": 0, "crawled": 0, "failed": 0, "skipped": 0}
+
+        if db is not None:
+            rate_limit_service.db = db
 
         try:
             for idx, url in enumerate(urls):

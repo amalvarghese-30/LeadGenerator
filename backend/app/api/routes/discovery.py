@@ -147,11 +147,16 @@ async def get_job_route(
 @router.get("/jobs/{job_id}/events")
 async def get_job_events_route(
     job_id: str,
+    since_id: Optional[str] = Query(None),
+    limit: int = Query(500, ge=1, le=2000),
     db: AsyncIOMotorDatabase = Depends(get_db),
     _user: dict = Depends(get_current_user),
 ):
-    """Retrieve historical persistent events for a research job."""
-    docs = await db.job_events.find({"job_id": job_id}).sort("event_timestamp", 1).to_list(500)
+    """Retrieve historical persistent events for a research job with cursor support."""
+    query: Dict[str, Any] = {"job_id": job_id}
+    if since_id and ObjectId.is_valid(since_id):
+        query["_id"] = {"$gt": ObjectId(since_id)}
+    docs = await db.job_events.find(query).sort("_id", 1).to_list(limit)
     return [_fmt_event(d) for d in docs]
 
 
@@ -159,47 +164,97 @@ async def get_job_events_route(
 async def stream_job_events(
     job_id: str,
     request: Request,
+    since_id: Optional[str] = Query(None),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     """
     Server-Sent Events (SSE) live activity stream for a research job.
+    Supports cross-process MongoDB event delivery, cursor resuming, and keepalives.
     """
     queue = await stream_manager.subscribe(job_id)
 
+    header_last_id = request.headers.get("Last-Event-ID")
+    start_cursor = since_id or header_last_id
+
     async def event_generator():
+        latest_seen_id = start_cursor if (start_cursor and ObjectId.is_valid(start_cursor)) else None
         try:
-            # Check if job is already in terminal state
+            # Check if job document exists and current status
             job_doc = None
             if ObjectId.is_valid(job_id):
                 job_doc = await db.crawl_jobs.find_one({"_id": ObjectId(job_id)})
 
-            # First send past events
-            past = await db.job_events.find({"job_id": job_id}).sort("event_timestamp", 1).to_list(200)
+            # 1. Yield all historical/unread events from MongoDB
+            initial_query: Dict[str, Any] = {"job_id": job_id}
+            if latest_seen_id and ObjectId.is_valid(latest_seen_id):
+                initial_query["_id"] = {"$gt": ObjectId(latest_seen_id)}
+
+            cursor = db.job_events.find(initial_query).sort("_id", 1)
             has_terminal = False
-            for ev in past:
-                formatted = _fmt_event(ev)
-                yield f"data: {json.dumps(formatted)}\n\n"
-                if formatted.get("event_type") in ("job_completed", "job_failed", "job_cancelled"):
+            async for doc in cursor:
+                latest_seen_id = str(doc["_id"])
+                ev = _fmt_event(doc)
+                event_type = ev.get("event_type", "message")
+                yield f"id: {latest_seen_id}\nevent: {event_type}\ndata: {json.dumps(ev)}\n\n"
+                if event_type in ("job_completed", "job_failed", "job_cancelled"):
                     has_terminal = True
 
-            # If already terminated, send close event and finish stream cleanly
-            if has_terminal or (job_doc and job_doc.get("status") in ("completed", "completed_with_warnings", "failed", "cancelled")):
+            # If already terminated in DB or events, close cleanly
+            is_terminal_status = bool(job_doc and job_doc.get("status") in ("completed", "completed_with_warnings", "failed", "cancelled"))
+            if has_terminal or is_terminal_status:
                 yield f"event: close\ndata: {json.dumps({'status': 'closed', 'message': 'Job execution finished'})}\n\n"
                 return
 
+            # 2. Live streaming loop (hybrid: polling MongoDB + in-memory queue)
+            last_heartbeat = asyncio.get_event_loop().time()
             while True:
                 if await request.is_disconnected():
                     break
+
+                # Check MongoDB for newly inserted events from external workers
+                poll_query: Dict[str, Any] = {"job_id": job_id}
+                if latest_seen_id and ObjectId.is_valid(latest_seen_id):
+                    poll_query["_id"] = {"$gt": ObjectId(latest_seen_id)}
+
+                new_docs = await db.job_events.find(poll_query).sort("_id", 1).to_list(100)
+                for doc in new_docs:
+                    latest_seen_id = str(doc["_id"])
+                    ev = _fmt_event(doc)
+                    event_type = ev.get("event_type", "message")
+                    yield f"id: {latest_seen_id}\nevent: {event_type}\ndata: {json.dumps(ev)}\n\n"
+                    if event_type in ("job_completed", "job_failed", "job_cancelled"):
+                        yield f"event: close\ndata: {json.dumps({'status': 'closed', 'event_type': event_type})}\n\n"
+                        return
+
+                # Check if job reached a terminal status in MongoDB
+                current_job = await db.crawl_jobs.find_one({"_id": ObjectId(job_id)}, {"status": 1}) if ObjectId.is_valid(job_id) else None
+                if current_job and current_job.get("status") in ("completed", "completed_with_warnings", "failed", "cancelled"):
+                    tail_docs = await db.job_events.find(poll_query).sort("_id", 1).to_list(50)
+                    for doc in tail_docs:
+                        latest_seen_id = str(doc["_id"])
+                        ev = _fmt_event(doc)
+                        event_type = ev.get("event_type", "message")
+                        yield f"id: {latest_seen_id}\nevent: {event_type}\ndata: {json.dumps(ev)}\n\n"
+                    yield f"event: close\ndata: {json.dumps({'status': 'closed', 'job_status': current_job.get('status')})}\n\n"
+                    return
+
+                # Await in-memory queue with 1.5s timeout
                 try:
-                    event = await asyncio.wait_for(queue.get(), timeout=15.0)
-                    yield f"data: {json.dumps(event)}\n\n"
-                    if event.get("event_type") in ("job_completed", "job_failed", "job_cancelled"):
-                        yield f"event: close\ndata: {json.dumps({'status': 'closed', 'event_type': event.get('event_type')})}\n\n"
-                        break
+                    event = await asyncio.wait_for(queue.get(), timeout=1.5)
+                    ev_id = event.get("id") or str(event.get("_id", ""))
+                    if not ev_id or (latest_seen_id and ev_id > latest_seen_id) or not latest_seen_id:
+                        if ev_id:
+                            latest_seen_id = ev_id
+                        event_type = event.get("event_type", "message")
+                        yield f"id: {latest_seen_id}\nevent: {event_type}\ndata: {json.dumps(event)}\n\n"
+                        if event_type in ("job_completed", "job_failed", "job_cancelled"):
+                            yield f"event: close\ndata: {json.dumps({'status': 'closed', 'event_type': event_type})}\n\n"
+                            return
                 except asyncio.TimeoutError:
-                    if await request.is_disconnected():
-                        break
-                    yield ": ping\n\n"
+                    now_time = asyncio.get_event_loop().time()
+                    if now_time - last_heartbeat >= 10.0:
+                        last_heartbeat = now_time
+                        yield ": ping\n\n"
         except (asyncio.CancelledError, GeneratorExit):
             pass
         finally:
@@ -209,7 +264,8 @@ async def stream_job_events(
         event_generator(),
         media_type="text/event-stream",
         headers={
-            "Cache-Control": "no-cache",
+            "Content-Type": "text/event-stream",
+            "Cache-Control": "no-cache, no-transform",
             "Connection": "keep-alive",
             "X-Accel-Buffering": "no",
         },

@@ -118,6 +118,16 @@ class RateLimitService:
         self.db = db
         self._lock = asyncio.Lock()
 
+    @property
+    def database(self) -> Optional[Any]:
+        if self.db is not None:
+            return self.db
+        try:
+            from app.database.connection import get_database
+            return get_database()
+        except Exception:
+            return None
+
     def _get_domain(self, url_or_domain: str) -> str:
         if "://" in url_or_domain:
             parsed = urlparse(url_or_domain)
@@ -169,11 +179,12 @@ class RateLimitService:
         }
 
         # 1. Persist to MongoDB rate_limit_request_logs
-        if self.db is not None:
+        db = self.database
+        if db is not None:
             try:
-                await self.db.rate_limit_request_logs.insert_one(dict(log_doc))
+                await db.rate_limit_request_logs.insert_one(dict(log_doc))
                 # Also keep legacy collection in sync
-                await self.db.rate_limit_metrics.insert_one({
+                await db.rate_limit_metrics.insert_one({
                     "domain": domain,
                     "timestamp": now,
                     "status_code": status_code,
@@ -188,9 +199,9 @@ class RateLimitService:
                 logger.debug("Failed to insert request log into MongoDB: %s", e)
 
         # 2. Update / Upsert domain profile in MongoDB
-        if self.db is not None:
+        if db is not None:
             try:
-                profile = await self.db.domain_rate_profiles.find_one({"domain": domain})
+                profile = await db.domain_rate_profiles.find_one({"domain": domain})
                 if not profile:
                     profile = {
                         "domain": domain,
@@ -250,7 +261,7 @@ class RateLimitService:
                     current_concurrency = max(1, current_concurrency - 1)
 
                     # Record incident in rate_limit_events
-                    await self.db.rate_limit_events.insert_one({
+                    await db.rate_limit_events.insert_one({
                         "domain": domain,
                         "event_type": "rate_limited",
                         "severity": "warning" if blocked <= 2 else "critical",
@@ -269,7 +280,7 @@ class RateLimitService:
 
                 estimated_interval = current_interval * 1.1
 
-                await self.db.domain_rate_profiles.update_one(
+                await db.domain_rate_profiles.update_one(
                     {"domain": domain},
                     {
                         "$set": {
@@ -301,15 +312,26 @@ class RateLimitService:
         Returns authoritative scheduling policy for crawler execution.
         """
         domain = self._get_domain(url_or_domain)
-        if self.db is not None:
-            profile = await self.db.domain_rate_profiles.find_one({"domain": domain})
-            if profile:
+        db = self.database
+        if db is not None:
+            profile = await db.domain_rate_profiles.find_one({"domain": domain})
+            if isinstance(profile, dict):
                 now = datetime.now(timezone.utc)
                 cd = profile.get("cooldown_until")
-                if cd and cd.tzinfo is None:
-                    cd = cd.replace(tzinfo=timezone.utc)
-                is_in_cooldown = bool(cd and cd > now)
-                delay_sec = max(1.0, profile.get("active_interval_ms", 1000.0) / 1000.0)
+                is_in_cooldown = False
+                if isinstance(cd, datetime):
+                    if cd.tzinfo is None:
+                        cd = cd.replace(tzinfo=timezone.utc)
+                    is_in_cooldown = bool(cd > now)
+                elif isinstance(cd, str):
+                    try:
+                        cd_dt = datetime.fromisoformat(cd)
+                        if cd_dt.tzinfo is None:
+                            cd_dt = cd_dt.replace(tzinfo=timezone.utc)
+                        is_in_cooldown = bool(cd_dt > now)
+                    except Exception:
+                        pass
+                delay_sec = max(1.0, float(profile.get("active_interval_ms", 1000.0) or 1000.0) / 1000.0)
                 return {
                     "domain": domain,
                     "recommended_delay_seconds": round(delay_sec, 2),
@@ -350,10 +372,11 @@ class RateLimitService:
         monitored_domains = 0
         paused_domains = 0
 
-        if self.db is not None:
+        db = self.database
+        if db is not None:
             try:
-                monitored_domains = await self.db.domain_rate_profiles.count_documents({})
-                paused_domains = await self.db.domain_rate_profiles.count_documents({"is_paused": True})
+                monitored_domains = await db.domain_rate_profiles.count_documents({})
+                paused_domains = await db.domain_rate_profiles.count_documents({"is_paused": True})
 
                 pipeline = [
                     {
@@ -368,7 +391,7 @@ class RateLimitService:
                         }
                     }
                 ]
-                agg_res = await self.db.rate_limit_request_logs.aggregate(pipeline).to_list(1)
+                agg_res = await db.rate_limit_request_logs.aggregate(pipeline).to_list(1)
                 if agg_res:
                     row = agg_res[0]
                     total_reqs = row.get("total", 0)
@@ -385,9 +408,9 @@ class RateLimitService:
 
         # Recent events
         recent_events = []
-        if self.db is not None:
+        if db is not None:
             try:
-                cursor = self.db.rate_limit_events.find().sort("timestamp", -1).limit(10)
+                cursor = db.rate_limit_events.find().sort("timestamp", -1).limit(10)
                 docs = await cursor.to_list(10)
                 for d in docs:
                     d["id"] = str(d.pop("_id", ""))
@@ -417,7 +440,8 @@ class RateLimitService:
         """
         Lists domain rate profiles persisted in MongoDB.
         """
-        if self.db is None:
+        db = self.database
+        if db is None:
             return []
 
         query: Dict[str, Any] = {}
@@ -426,7 +450,7 @@ class RateLimitService:
         if status_filter:
             query["status"] = status_filter
 
-        cursor = self.db.domain_rate_profiles.find(query).sort("total_requests", -1).limit(100)
+        cursor = db.domain_rate_profiles.find(query).sort("total_requests", -1).limit(100)
         docs = await cursor.to_list(100)
 
         res = []
@@ -445,13 +469,14 @@ class RateLimitService:
     async def pause_domain(self, domain_name: str, reason: str = "Administrative manual hold") -> Dict[str, Any]:
         domain = self._get_domain(domain_name)
         now = datetime.now(timezone.utc)
-        if self.db is not None:
-            await self.db.domain_rate_profiles.update_one(
+        db = self.database
+        if db is not None:
+            await db.domain_rate_profiles.update_one(
                 {"domain": domain},
                 {"$set": {"is_paused": True, "status": "paused", "updated_at": now}},
                 upsert=True,
             )
-            await self.db.rate_limit_events.insert_one({
+            await db.rate_limit_events.insert_one({
                 "domain": domain,
                 "event_type": "domain_paused",
                 "severity": "info",
@@ -463,12 +488,13 @@ class RateLimitService:
     async def resume_domain(self, domain_name: str) -> Dict[str, Any]:
         domain = self._get_domain(domain_name)
         now = datetime.now(timezone.utc)
-        if self.db is not None:
-            await self.db.domain_rate_profiles.update_one(
+        db = self.database
+        if db is not None:
+            await db.domain_rate_profiles.update_one(
                 {"domain": domain},
                 {"$set": {"is_paused": False, "status": "normal", "updated_at": now}},
             )
-            await self.db.rate_limit_events.insert_one({
+            await db.rate_limit_events.insert_one({
                 "domain": domain,
                 "event_type": "domain_resumed",
                 "severity": "info",
@@ -480,8 +506,9 @@ class RateLimitService:
     async def reset_domain_profile(self, domain_name: str) -> Dict[str, Any]:
         domain = self._get_domain(domain_name)
         now = datetime.now(timezone.utc)
-        if self.db is not None:
-            await self.db.domain_rate_profiles.update_one(
+        db = self.database
+        if db is not None:
+            await db.domain_rate_profiles.update_one(
                 {"domain": domain},
                 {
                     "$set": {
@@ -503,11 +530,12 @@ class RateLimitService:
         return {"domain": domain, "message": "Domain metrics reset successfully"}
 
     async def reset_all(self) -> None:
-        if self.db is not None:
-            await self.db.rate_limit_request_logs.delete_many({})
-            await self.db.rate_limit_metrics.delete_many({})
-            await self.db.domain_rate_profiles.delete_many({})
-            await self.db.rate_limit_events.delete_many({})
+        db = self.database
+        if db is not None:
+            await db.rate_limit_request_logs.delete_many({})
+            await db.rate_limit_metrics.delete_many({})
+            await db.domain_rate_profiles.delete_many({})
+            await db.rate_limit_events.delete_many({})
 
     # --- Request Logs & CSV Export ---
     async def get_request_logs(
@@ -517,7 +545,8 @@ class RateLimitService:
         limit: int = 50,
         skip: int = 0,
     ) -> Tuple[List[Dict[str, Any]], int]:
-        if self.db is None:
+        db = self.database
+        if db is None:
             return [], 0
         query: Dict[str, Any] = {}
         if domain:
@@ -525,7 +554,9 @@ class RateLimitService:
         if classification:
             query["classification"] = classification
 
-        total = await self.db.rate_limit_request_logs.count_documents(query)
+        total = await db.rate_limit_request_logs.count_documents(query)
+        cursor = db.rate_limit_request_logs.find(query).sort("timestamp", -1).skip(skip).limit(limit)
+        docs = await cursor.to_list(limit)
         cursor = self.db.rate_limit_request_logs.find(query).sort("timestamp", -1).skip(skip).limit(limit)
         docs = await cursor.to_list(limit)
 
@@ -564,8 +595,9 @@ class RateLimitService:
         """
         now = datetime.now(timezone.utc)
         stored_token = token
-        if not stored_token and self.db is not None:
-            stored = await self.db.api_rate_limit_profiles.find_one({"provider": "github"})
+        db = self.database
+        if not stored_token and db is not None:
+            stored = await db.api_rate_limit_profiles.find_one({"provider": "github"})
             if stored and stored.get("token"):
                 stored_token = stored["token"]
 
@@ -620,11 +652,11 @@ class RateLimitService:
             "resources": resources_dict,
         }
 
-        if self.db is not None:
+        if db is not None:
             update_payload = dict(profile_doc)
             if stored_token:
                 update_payload["token"] = stored_token
-            await self.db.api_rate_limit_profiles.update_one(
+            await db.api_rate_limit_profiles.update_one(
                 {"provider": "github"},
                 {"$set": update_payload},
                 upsert=True,
@@ -633,8 +665,9 @@ class RateLimitService:
         return profile_doc
 
     async def get_github_status(self) -> Dict[str, Any]:
-        if self.db is not None:
-            profile = await self.db.api_rate_limit_profiles.find_one({"provider": "github"})
+        db = self.database
+        if db is not None:
+            profile = await db.api_rate_limit_profiles.find_one({"provider": "github"})
             if profile:
                 profile.pop("token", None)  # Never expose secret token
                 profile["id"] = str(profile.pop("_id", ""))

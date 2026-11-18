@@ -61,13 +61,23 @@ export const WebsiteIntelligence: React.FC = () => {
   const [isJobsLoading, setIsJobsLoading] = useState(false);
 
   // Terminal scroll & streaming state
-  const pollRef = useRef<number | null>(null);
-  const sseRef = useRef<EventSource | null>(null);
+  type ConnectionStatus = 'streaming' | 'reconnecting' | 'polling' | 'finished' | 'idle';
+  const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>('idle');
+  const [unseenCount, setUnseenCount] = useState(0);
+
   const logContainerRef = useRef<HTMLDivElement | null>(null);
-  const logsEndRef = useRef<HTMLDivElement | null>(null);
+  const isAtBottomRef = useRef(true);
   const [isAtBottom, setIsAtBottom] = useState(true);
   const [hasNewLogs, setHasNewLogs] = useState(false);
   const [isCopied, setIsCopied] = useState(false);
+
+  const lastEventIdRef = useRef<string | null>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
+  const reconnectTimerRef = useRef<number | null>(null);
+  const reconnectAttemptRef = useRef(0);
+  const pollRef = useRef<number | null>(null);
+  const isPollingRef = useRef(false);
+  const scrollRafRef = useRef<number | null>(null);
 
   const fetchRecentJobs = async () => {
     setIsJobsLoading(true);
@@ -88,20 +98,30 @@ export const WebsiteIntelligence: React.FC = () => {
   const handleScroll = () => {
     if (!logContainerRef.current) return;
     const { scrollTop, scrollHeight, clientHeight } = logContainerRef.current;
-    // If within 35px of the bottom, user is considered at the bottom
-    const atBottom = scrollHeight - scrollTop - clientHeight < 35;
+    // Within 40px of bottom is considered "at bottom"
+    const atBottom = scrollHeight - scrollTop - clientHeight <= 40;
+    isAtBottomRef.current = atBottom;
     setIsAtBottom(atBottom);
     if (atBottom) {
       setHasNewLogs(false);
+      setUnseenCount(0);
     }
   };
 
-  const scrollToBottom = (behavior: ScrollBehavior = 'smooth') => {
-    if (logsEndRef.current) {
-      logsEndRef.current.scrollIntoView({ behavior });
+  const scrollToBottom = (instant = false) => {
+    if (!logContainerRef.current) return;
+    if (scrollRafRef.current) {
+      cancelAnimationFrame(scrollRafRef.current);
     }
-    setIsAtBottom(true);
-    setHasNewLogs(false);
+    scrollRafRef.current = requestAnimationFrame(() => {
+      if (logContainerRef.current) {
+        logContainerRef.current.scrollTop = logContainerRef.current.scrollHeight;
+        isAtBottomRef.current = true;
+        setIsAtBottom(true);
+        setHasNewLogs(false);
+        setUnseenCount(0);
+      }
+    });
   };
 
   const handleCopyLogs = async () => {
@@ -118,117 +138,245 @@ export const WebsiteIntelligence: React.FC = () => {
     }
   };
 
-  // Set up SSE or event polling for active job
+  // Set up resilient authenticated stream reader and status polling
   useEffect(() => {
     if (!activeJobId) {
-      if (sseRef.current) {
-        sseRef.current.close();
-        sseRef.current = null;
-      }
+      setConnectionStatus('idle');
       return;
     }
 
-    // Reset scroll indicator for new job inspection
+    let isCancelled = false;
+    isAtBottomRef.current = true;
     setIsAtBottom(true);
     setHasNewLogs(false);
+    setUnseenCount(0);
+    reconnectAttemptRef.current = 0;
 
-    // Try EventSource
-    try {
-      const eventSource = new EventSource(getJobEventsStreamUrl(activeJobId));
-      sseRef.current = eventSource;
-
-      eventSource.onmessage = (e) => {
-        try {
-          const ev: JobEvent = JSON.parse(e.data);
-          setEvents((prev) => {
-            if (prev.some((p) => (p.id && p.id === ev.id) || (p.event_timestamp === ev.event_timestamp && p.message === ev.message))) {
-              return prev;
-            }
-            return [...prev, ev];
-          });
-
-          // Close EventSource cleanly when terminal event is received
-          if (['job_completed', 'job_failed', 'job_cancelled'].includes(ev.event_type)) {
-            eventSource.close();
-            sseRef.current = null;
-          }
-        } catch {
-          // heartbeat or non-json
+    // Helper to merge newly fetched events
+    const mergeEvents = (newEvents: JobEvent[]) => {
+      if (!newEvents || newEvents.length === 0) return;
+      setEvents((prev) => {
+        const existingIds = new Set(prev.map((p) => p.id).filter(Boolean));
+        const additions: JobEvent[] = [];
+        for (const ev of newEvents) {
+          if (ev.id && existingIds.has(ev.id)) continue;
+          if (!ev.id && prev.some((p) => p.event_timestamp === ev.event_timestamp && p.message === ev.message)) continue;
+          additions.push(ev);
+          if (ev.id) existingIds.add(ev.id);
         }
-      };
-
-      eventSource.addEventListener('close', () => {
-        eventSource.close();
-        sseRef.current = null;
+        if (additions.length === 0) return prev;
+        const merged = [...prev, ...additions];
+        const last = merged[merged.length - 1];
+        if (last && last.id) {
+          lastEventIdRef.current = last.id;
+        }
+        return merged;
       });
+    };
 
-      eventSource.onerror = () => {
-        eventSource.close();
-        sseRef.current = null;
-      };
-    } catch {
-      // fallback to poll
-    }
+    // Authenticated SSE Reader using fetch + ReadableStream
+    const startStream = async () => {
+      if (isCancelled) return;
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+      const controller = new AbortController();
+      abortControllerRef.current = controller;
 
-    // Job state polling
-    const tick = async () => {
       try {
-        const j = await getCrawlJob(activeJobId);
-        setJob(j);
+        const token = localStorage.getItem('token');
+        const sinceParam = lastEventIdRef.current ? `?since_id=${encodeURIComponent(lastEventIdRef.current)}` : '';
+        const url = `/api/discovery/jobs/${activeJobId}/events/stream${sinceParam}`;
 
-        // Also fetch events periodically in case SSE missed any
-        try {
-          const evList = await getJobEvents(activeJobId);
-          if (evList && evList.length > 0) {
-            setEvents((prev) => {
-              if (prev.length === evList.length && prev[prev.length - 1]?.id === evList[evList.length - 1]?.id) {
-                return prev;
+        const headers: Record<string, string> = {
+          'Accept': 'text/event-stream',
+        };
+        if (token) {
+          headers['Authorization'] = `Bearer ${token}`;
+        }
+        if (lastEventIdRef.current) {
+          headers['Last-Event-ID'] = lastEventIdRef.current;
+        }
+
+        const response = await fetch(url, {
+          headers,
+          signal: controller.signal,
+        });
+
+        if (!response.ok || !response.body) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+
+        setConnectionStatus('streaming');
+        reconnectAttemptRef.current = 0;
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        while (!isCancelled) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+
+          const lines = buffer.split('\n\n');
+          buffer = lines.pop() || '';
+
+          const parsedList: JobEvent[] = [];
+          for (const chunk of lines) {
+            if (!chunk.trim() || chunk.startsWith(':')) continue; // Heartbeat / comment
+            const rawLines = chunk.split('\n');
+            let eventData = '';
+            let eventType = 'message';
+            let eventId = '';
+
+            for (const line of rawLines) {
+              if (line.startsWith('id:')) {
+                eventId = line.slice(3).trim();
+              } else if (line.startsWith('event:')) {
+                eventType = line.slice(6).trim();
+              } else if (line.startsWith('data:')) {
+                eventData += line.slice(5).trim();
               }
-              return evList;
-            });
+            }
+
+            if (eventType === 'close') {
+              setConnectionStatus('finished');
+              return;
+            }
+
+            if (eventData) {
+              try {
+                const parsed: JobEvent = JSON.parse(eventData);
+                if (eventId && !parsed.id) {
+                  parsed.id = eventId;
+                }
+                parsedList.push(parsed);
+                if (['job_completed', 'job_failed', 'job_cancelled'].includes(parsed.event_type)) {
+                  setConnectionStatus('finished');
+                }
+              } catch {
+                // Ignore non-json
+              }
+            }
+          }
+
+          if (parsedList.length > 0) {
+            mergeEvents(parsedList);
+          }
+        }
+      } catch (err: any) {
+        if (isCancelled || controller.signal.aborted) return;
+        setConnectionStatus('reconnecting');
+
+        // Catch-up from REST API in case SSE dropped mid-flight
+        try {
+          const missed = await getJobEvents(activeJobId, { since_id: lastEventIdRef.current || undefined });
+          if (missed && missed.length > 0) {
+            mergeEvents(missed);
           }
         } catch {
           // ignore
         }
 
-        const terminal = ['completed', 'completed_with_warnings', 'failed', 'cancelled'].includes(j.status);
-        if (terminal) {
-          if (pollRef.current) window.clearInterval(pollRef.current);
-          pollRef.current = null;
-          if (sseRef.current) {
-            sseRef.current.close();
-            sseRef.current = null;
+        // Check if job is already terminal before retrying stream
+        try {
+          const currentJob = await getCrawlJob(activeJobId);
+          setJob(currentJob);
+          if (['completed', 'completed_with_warnings', 'failed', 'cancelled'].includes(currentJob.status)) {
+            setConnectionStatus('finished');
+            return;
           }
-          fetchRecentJobs();
+        } catch {
+          // ignore
         }
-      } catch {
-        // transient poll error
+
+        // Exponential backoff reconnect
+        const attempt = reconnectAttemptRef.current;
+        reconnectAttemptRef.current += 1;
+        const delay = Math.min(1000 * Math.pow(1.5, attempt), 10000);
+        reconnectTimerRef.current = window.setTimeout(() => {
+          if (!isCancelled) startStream();
+        }, delay);
       }
     };
 
-    pollRef.current = window.setInterval(tick, 2000);
-    tick();
+    // Initial historical events load
+    const loadInitialEvents = async () => {
+      try {
+        const past = await getJobEvents(activeJobId, { limit: 1000 });
+        if (!isCancelled && past && past.length > 0) {
+          mergeEvents(past);
+        }
+      } catch {
+        // ignore
+      }
+      if (!isCancelled) {
+        startStream();
+      }
+    };
+
+    loadInitialEvents();
+
+    // Concurrent-safe status polling
+    const pollStatus = async () => {
+      if (isPollingRef.current || isCancelled) return;
+      isPollingRef.current = true;
+      try {
+        const j = await getCrawlJob(activeJobId);
+        if (!isCancelled) {
+          setJob(j);
+          const isTerminal = ['completed', 'completed_with_warnings', 'failed', 'cancelled'].includes(j.status);
+          if (isTerminal) {
+            setConnectionStatus('finished');
+            if (pollRef.current) window.clearInterval(pollRef.current);
+            pollRef.current = null;
+            fetchRecentJobs();
+          }
+        }
+      } catch {
+        // ignore
+      } finally {
+        isPollingRef.current = false;
+      }
+    };
+
+    pollRef.current = window.setInterval(pollStatus, 2500);
+    pollStatus();
 
     return () => {
-      if (pollRef.current) window.clearInterval(pollRef.current);
-      pollRef.current = null;
-      if (sseRef.current) {
-        sseRef.current.close();
-        sseRef.current = null;
+      isCancelled = true;
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+        abortControllerRef.current = null;
+      }
+      if (reconnectTimerRef.current) {
+        window.clearTimeout(reconnectTimerRef.current);
+        reconnectTimerRef.current = null;
+      }
+      if (pollRef.current) {
+        window.clearInterval(pollRef.current);
+        pollRef.current = null;
       }
     };
   }, [activeJobId]);
 
-  // Auto-scroll log to bottom ONLY IF user is at bottom
+  // Direct scrollTop auto-scroll via requestAnimationFrame (preserves outer page scroll)
   useEffect(() => {
-    if (isAtBottom) {
-      if (logsEndRef.current) {
-        logsEndRef.current.scrollIntoView({ behavior: 'smooth' });
+    if (isAtBottomRef.current) {
+      if (scrollRafRef.current) {
+        cancelAnimationFrame(scrollRafRef.current);
       }
+      scrollRafRef.current = requestAnimationFrame(() => {
+        if (logContainerRef.current && isAtBottomRef.current) {
+          logContainerRef.current.scrollTop = logContainerRef.current.scrollHeight;
+        }
+      });
     } else {
       setHasNewLogs(true);
+      setUnseenCount((prev) => prev + 1);
     }
-  }, [events, isAtBottom]);
+  }, [events]);
 
   const handleStartResearch = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -280,10 +428,11 @@ export const WebsiteIntelligence: React.FC = () => {
 
   const handleRetryJob = async (id: string) => {
     try {
-      if (sseRef.current) {
-        sseRef.current.close();
-        sseRef.current = null;
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+        abortControllerRef.current = null;
       }
+      lastEventIdRef.current = null;
       await retryCrawlJob(id);
       setEvents([]);
       setIsAtBottom(true);
@@ -512,10 +661,20 @@ export const WebsiteIntelligence: React.FC = () => {
               </div>
 
               <div className="flex items-center gap-2">
-                {!isJobTerminal ? (
+                {connectionStatus === 'streaming' ? (
                   <div className="flex items-center gap-1.5 text-[10px] text-emerald-600 font-bold bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
                     <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-ping" />
                     Streaming Live Events
+                  </div>
+                ) : connectionStatus === 'reconnecting' ? (
+                  <div className="flex items-center gap-1.5 text-[10px] text-amber-600 font-bold bg-amber-50 px-2 py-0.5 rounded-full border border-amber-200">
+                    <Loader2 className="w-3 h-3 animate-spin text-amber-600" />
+                    Reconnecting Stream...
+                  </div>
+                ) : connectionStatus === 'polling' ? (
+                  <div className="flex items-center gap-1.5 text-[10px] text-blue-600 font-semibold bg-blue-50 px-2 py-0.5 rounded-full border border-blue-200">
+                    <Activity className="w-3 h-3 text-blue-500" />
+                    Live Polling
                   </div>
                 ) : (
                   <div className="flex items-center gap-1.5 text-[10px] text-slate-500 font-semibold bg-slate-100 px-2 py-0.5 rounded-full border border-slate-200">
@@ -543,7 +702,7 @@ export const WebsiteIntelligence: React.FC = () => {
                   size="sm"
                   variant="ghost"
                   className="h-6 px-2 text-[11px] text-slate-600 hover:text-slate-900 flex items-center gap-1"
-                  onClick={() => scrollToBottom('smooth')}
+                  onClick={() => scrollToBottom(true)}
                   title="Scroll to latest log entry"
                 >
                   <ArrowDown className="w-3 h-3" />
@@ -556,7 +715,7 @@ export const WebsiteIntelligence: React.FC = () => {
               <div
                 ref={logContainerRef}
                 onScroll={handleScroll}
-                className="h-72 overflow-y-auto p-3.5 rounded-xl bg-slate-900 text-slate-200 font-mono text-[11px] space-y-1.5 border border-slate-800 shadow-inner scroll-smooth"
+                className="h-72 sm:h-80 md:h-96 max-h-[440px] overflow-y-auto overscroll-contain p-3.5 rounded-xl bg-slate-900 text-slate-200 font-mono text-[11px] space-y-1.5 border border-slate-800 shadow-inner select-text"
               >
                 {events.length === 0 ? (
                   <div className="text-slate-500 italic py-2">
@@ -592,18 +751,17 @@ export const WebsiteIntelligence: React.FC = () => {
                     );
                   })
                 )}
-                <div ref={logsEndRef} />
               </div>
 
               {/* Floating "New logs available" pill */}
               {hasNewLogs && !isAtBottom && (
                 <button
                   type="button"
-                  onClick={() => scrollToBottom('smooth')}
-                  className="absolute bottom-3 left-1/2 -translate-x-1/2 flex items-center gap-1.5 px-3 py-1 rounded-full bg-indigo-600 hover:bg-indigo-700 text-white text-[11px] font-semibold shadow-lg shadow-black/50 border border-indigo-400/40 transition-all cursor-pointer z-10 animate-bounce"
+                  onClick={() => scrollToBottom(true)}
+                  className="absolute bottom-3 left-1/2 -translate-x-1/2 flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-indigo-600 hover:bg-indigo-700 text-white text-[11px] font-semibold shadow-lg shadow-black/50 border border-indigo-400/40 transition-all cursor-pointer z-10 animate-bounce"
                 >
-                  <ArrowDown className="w-3 h-3" />
-                  <span>New logs available</span>
+                  <ArrowDown className="w-3.5 h-3.5" />
+                  <span>New logs available {unseenCount > 0 ? `(${unseenCount})` : ''}</span>
                 </button>
               )}
             </div>

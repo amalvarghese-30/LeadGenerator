@@ -49,8 +49,8 @@ export const retryCrawlJob = async (id: string): Promise<void> => {
   await api.post(`/discovery/jobs/${id}/retry`);
 };
 
-export const getJobEvents = async (id: string) => {
-  const res = await api.get(`/discovery/jobs/${id}/events`);
+export const getJobEvents = async (id: string, params?: { since_id?: string; limit?: number }) => {
+  const res = await api.get(`/discovery/jobs/${id}/events`, { params });
   return res.data;
 };
 

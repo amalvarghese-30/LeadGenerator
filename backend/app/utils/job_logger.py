@@ -75,7 +75,8 @@ async def log_job_event(
 
     try:
         if db is not None:
-            await db.job_events.insert_one(dict(event_doc))
+            res = await db.job_events.insert_one(event_doc)
+            event_doc["_id"] = res.inserted_id
     except Exception as e:
         logger.warning("Failed to persist job event: %s", e)
 
@@ -84,6 +85,8 @@ async def log_job_event(
     serialized["event_timestamp"] = now.isoformat()
     if "_id" in serialized:
         serialized["id"] = str(serialized.pop("_id"))
+    else:
+        serialized["id"] = f"ev-{int(now.timestamp() * 1000)}"
 
     await stream_manager.broadcast(str(job_id), serialized)
     return serialized

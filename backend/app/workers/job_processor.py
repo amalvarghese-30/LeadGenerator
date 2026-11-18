@@ -9,6 +9,7 @@ Background Job Processor — Enhanced.
 import asyncio
 import os
 import logging
+import traceback
 from datetime import datetime, timezone, timedelta
 from typing import Optional, Dict, Any, List
 from bson import ObjectId
@@ -34,14 +35,17 @@ LOCK_TIMEOUT_MINUTES = 20
 MAX_PAGES_PER_JOB = 30
 
 
-def _err(stage: str, message: str, url: Optional[str] = None, err_type: str = "unknown") -> Dict:
-    return {
+def _err(stage: str, message: str, url: Optional[str] = None, err_type: str = "unknown", traceback_str: Optional[str] = None) -> Dict:
+    res = {
         "stage": stage,
         "message": str(message)[:500],
         "error_type": err_type,
         "url": url,
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
+    if traceback_str:
+        res["traceback"] = traceback_str
+    return res
 
 
 class JobProcessor:
@@ -237,9 +241,15 @@ class JobProcessor:
                     f"No pages crawled successfully. First error: {errors[0]['message'] if errors else 'unknown'}"
                 )
         except Exception as e:
-            logger.exception("[CRAWLER] fatal")
-            errors.append(_err("crawling", str(e), err_type="crawl_fatal"))
-            await log_job_event(db, job_id, "crawling", "error", "crawl_failed", f"Crawl fatal error: {e}")
+            tb = traceback.format_exc()
+            logger.error("[CRAWLER] fatal error for job %s:\n%s", job_id, tb)
+            err_dict = _err("crawling", f"{type(e).__name__}: {str(e)}", err_type="crawl_fatal", traceback_str=tb)
+            errors.append(err_dict)
+            await log_job_event(
+                db, job_id, "crawling", "error", "crawl_failed",
+                f"Crawl fatal error: {type(e).__name__}: {e}",
+                metadata={"traceback": tb[-1000:], "error_type": "crawl_fatal"}
+            )
             await self._finish(db, job_id, "failed", errors, warnings, 0, 0, 0, 0)
             return
 
