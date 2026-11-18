@@ -1,9 +1,10 @@
+import asyncio
 import json
 import logging
 from datetime import datetime, timezone
 from typing import Optional, Dict, Any, List
 from bson import ObjectId
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
@@ -48,6 +49,7 @@ async def search_providers_route(
 @router.post("/providers/{provider_id}/research")
 async def research_provider_route(
     provider_id: str,
+    page_limit: Optional[int] = Query(None, ge=1, le=100),
     db: AsyncIOMotorDatabase = Depends(get_db),
     user: dict = Depends(get_current_user),
 ):
@@ -71,6 +73,7 @@ async def research_provider_route(
         "provider_id": provider_id,
         "starting_url": target_url,
         "job_type": "full_research",
+        "max_pages": page_limit or 30,
         "status": "pending",
         "current_stage": "queued",
         "progress_pct": 0,
@@ -155,6 +158,7 @@ async def get_job_events_route(
 @router.get("/jobs/{job_id}/events/stream")
 async def stream_job_events(
     job_id: str,
+    request: Request,
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     """
@@ -163,22 +167,41 @@ async def stream_job_events(
     queue = await stream_manager.subscribe(job_id)
 
     async def event_generator():
-        # First send past events
-        past = await db.job_events.find({"job_id": job_id}).sort("event_timestamp", 1).to_list(100)
-        for ev in past:
-            yield f"data: {json.dumps(_fmt_event(ev))}\n\n"
-
         try:
+            # Check if job is already in terminal state
+            job_doc = None
+            if ObjectId.is_valid(job_id):
+                job_doc = await db.crawl_jobs.find_one({"_id": ObjectId(job_id)})
+
+            # First send past events
+            past = await db.job_events.find({"job_id": job_id}).sort("event_timestamp", 1).to_list(200)
+            has_terminal = False
+            for ev in past:
+                formatted = _fmt_event(ev)
+                yield f"data: {json.dumps(formatted)}\n\n"
+                if formatted.get("event_type") in ("job_completed", "job_failed", "job_cancelled"):
+                    has_terminal = True
+
+            # If already terminated, send close event and finish stream cleanly
+            if has_terminal or (job_doc and job_doc.get("status") in ("completed", "completed_with_warnings", "failed", "cancelled")):
+                yield f"event: close\ndata: {json.dumps({'status': 'closed', 'message': 'Job execution finished'})}\n\n"
+                return
+
             while True:
-                # Wait for next live broadcast
+                if await request.is_disconnected():
+                    break
                 try:
-                    event = await asyncio.wait_for(queue.get(), timeout=20.0)
+                    event = await asyncio.wait_for(queue.get(), timeout=15.0)
                     yield f"data: {json.dumps(event)}\n\n"
                     if event.get("event_type") in ("job_completed", "job_failed", "job_cancelled"):
+                        yield f"event: close\ndata: {json.dumps({'status': 'closed', 'event_type': event.get('event_type')})}\n\n"
                         break
                 except asyncio.TimeoutError:
-                    # Keep-alive heartbeat
+                    if await request.is_disconnected():
+                        break
                     yield ": ping\n\n"
+        except (asyncio.CancelledError, GeneratorExit):
+            pass
         finally:
             await stream_manager.unsubscribe(job_id, queue)
 

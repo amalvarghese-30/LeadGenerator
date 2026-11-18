@@ -16,6 +16,9 @@ import {
   XCircle,
   Clock,
   Radio,
+  ArrowDown,
+  Copy,
+  Check,
 } from 'lucide-react';
 import { Card } from '../../components/ui/Card';
 import { Button } from '../../components/ui/Button';
@@ -57,9 +60,14 @@ export const WebsiteIntelligence: React.FC = () => {
   const [recentJobs, setRecentJobs] = useState<CrawlJob[]>([]);
   const [isJobsLoading, setIsJobsLoading] = useState(false);
 
+  // Terminal scroll & streaming state
   const pollRef = useRef<number | null>(null);
   const sseRef = useRef<EventSource | null>(null);
+  const logContainerRef = useRef<HTMLDivElement | null>(null);
   const logsEndRef = useRef<HTMLDivElement | null>(null);
+  const [isAtBottom, setIsAtBottom] = useState(true);
+  const [hasNewLogs, setHasNewLogs] = useState(false);
+  const [isCopied, setIsCopied] = useState(false);
 
   const fetchRecentJobs = async () => {
     setIsJobsLoading(true);
@@ -77,6 +85,39 @@ export const WebsiteIntelligence: React.FC = () => {
     fetchRecentJobs();
   }, []);
 
+  const handleScroll = () => {
+    if (!logContainerRef.current) return;
+    const { scrollTop, scrollHeight, clientHeight } = logContainerRef.current;
+    // If within 35px of the bottom, user is considered at the bottom
+    const atBottom = scrollHeight - scrollTop - clientHeight < 35;
+    setIsAtBottom(atBottom);
+    if (atBottom) {
+      setHasNewLogs(false);
+    }
+  };
+
+  const scrollToBottom = (behavior: ScrollBehavior = 'smooth') => {
+    if (logsEndRef.current) {
+      logsEndRef.current.scrollIntoView({ behavior });
+    }
+    setIsAtBottom(true);
+    setHasNewLogs(false);
+  };
+
+  const handleCopyLogs = async () => {
+    if (events.length === 0) return;
+    const logText = events
+      .map((ev) => `[${ev.event_timestamp ? new Date(ev.event_timestamp).toISOString() : ''}] [${ev.severity?.toUpperCase() || 'INFO'}] [${ev.stage || 'GENERAL'}] ${ev.message}`)
+      .join('\n');
+    try {
+      await navigator.clipboard.writeText(logText);
+      setIsCopied(true);
+      setTimeout(() => setIsCopied(false), 2000);
+    } catch {
+      // ignore clipboard error
+    }
+  };
+
   // Set up SSE or event polling for active job
   useEffect(() => {
     if (!activeJobId) {
@@ -87,6 +128,10 @@ export const WebsiteIntelligence: React.FC = () => {
       return;
     }
 
+    // Reset scroll indicator for new job inspection
+    setIsAtBottom(true);
+    setHasNewLogs(false);
+
     // Try EventSource
     try {
       const eventSource = new EventSource(getJobEventsStreamUrl(activeJobId));
@@ -96,15 +141,26 @@ export const WebsiteIntelligence: React.FC = () => {
         try {
           const ev: JobEvent = JSON.parse(e.data);
           setEvents((prev) => {
-            if (prev.some((p) => p.id === ev.id && p.event_timestamp === ev.event_timestamp)) {
+            if (prev.some((p) => (p.id && p.id === ev.id) || (p.event_timestamp === ev.event_timestamp && p.message === ev.message))) {
               return prev;
             }
             return [...prev, ev];
           });
+
+          // Close EventSource cleanly when terminal event is received
+          if (['job_completed', 'job_failed', 'job_cancelled'].includes(ev.event_type)) {
+            eventSource.close();
+            sseRef.current = null;
+          }
         } catch {
           // heartbeat or non-json
         }
       };
+
+      eventSource.addEventListener('close', () => {
+        eventSource.close();
+        sseRef.current = null;
+      });
 
       eventSource.onerror = () => {
         eventSource.close();
@@ -124,7 +180,12 @@ export const WebsiteIntelligence: React.FC = () => {
         try {
           const evList = await getJobEvents(activeJobId);
           if (evList && evList.length > 0) {
-            setEvents(evList);
+            setEvents((prev) => {
+              if (prev.length === evList.length && prev[prev.length - 1]?.id === evList[evList.length - 1]?.id) {
+                return prev;
+              }
+              return evList;
+            });
           }
         } catch {
           // ignore
@@ -134,6 +195,10 @@ export const WebsiteIntelligence: React.FC = () => {
         if (terminal) {
           if (pollRef.current) window.clearInterval(pollRef.current);
           pollRef.current = null;
+          if (sseRef.current) {
+            sseRef.current.close();
+            sseRef.current = null;
+          }
           fetchRecentJobs();
         }
       } catch {
@@ -154,12 +219,16 @@ export const WebsiteIntelligence: React.FC = () => {
     };
   }, [activeJobId]);
 
-  // Auto-scroll log to bottom
+  // Auto-scroll log to bottom ONLY IF user is at bottom
   useEffect(() => {
-    if (logsEndRef.current) {
-      logsEndRef.current.scrollIntoView({ behavior: 'smooth' });
+    if (isAtBottom) {
+      if (logsEndRef.current) {
+        logsEndRef.current.scrollIntoView({ behavior: 'smooth' });
+      }
+    } else {
+      setHasNewLogs(true);
     }
-  }, [events]);
+  }, [events, isAtBottom]);
 
   const handleStartResearch = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -168,6 +237,9 @@ export const WebsiteIntelligence: React.FC = () => {
     setError(null);
     setIsStarting(true);
     setEvents([]);
+    setIsAtBottom(true);
+    setHasNewLogs(false);
+
     try {
       const domainName = targetUrl.replace(/https?:\/\//, '').split('/')[0];
       const provider = await createProvider({
@@ -177,7 +249,7 @@ export const WebsiteIntelligence: React.FC = () => {
       });
       const providerId = (provider as any).id || (provider as any)._id;
 
-      const createdJob = await startProviderResearch(providerId);
+      const createdJob = await startProviderResearch(providerId, pageLimit);
       const jId = createdJob.id || (createdJob as any)._id;
       setActiveJobId(jId);
       setJob(createdJob);
@@ -208,9 +280,21 @@ export const WebsiteIntelligence: React.FC = () => {
 
   const handleRetryJob = async (id: string) => {
     try {
+      if (sseRef.current) {
+        sseRef.current.close();
+        sseRef.current = null;
+      }
       await retryCrawlJob(id);
-      setActiveJobId(id);
       setEvents([]);
+      setIsAtBottom(true);
+      setHasNewLogs(false);
+      if (activeJobId === id) {
+        setJob((prev) => prev ? { ...prev, status: 'pending', current_stage: 'queued', progress_pct: 0 } : null);
+        setActiveJobId(null);
+        setTimeout(() => setActiveJobId(id), 50);
+      } else {
+        setActiveJobId(id);
+      }
       fetchRecentJobs();
     } catch (err) {
       console.error('Retry failed:', err);
@@ -416,55 +500,112 @@ export const WebsiteIntelligence: React.FC = () => {
 
           {/* Live Activity Stream (SSE) */}
           <div className="space-y-2">
-            <div className="flex items-center justify-between">
+            <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="flex items-center gap-2">
                 <Terminal className="w-4 h-4 text-slate-600" />
                 <h3 className="text-xs font-bold uppercase tracking-wider text-slate-600">
                   Live Execution Logs & Activity Stream
                 </h3>
+                <span className="text-[11px] text-slate-400 font-mono">
+                  ({events.length} {events.length === 1 ? 'event' : 'events'})
+                </span>
               </div>
-              {!isJobTerminal && (
-                <div className="flex items-center gap-1.5 text-[10px] text-emerald-600 font-bold">
-                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping" />
-                  Streaming Live Events
-                </div>
-              )}
+
+              <div className="flex items-center gap-2">
+                {!isJobTerminal ? (
+                  <div className="flex items-center gap-1.5 text-[10px] text-emerald-600 font-bold bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-ping" />
+                    Streaming Live Events
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-1.5 text-[10px] text-slate-500 font-semibold bg-slate-100 px-2 py-0.5 rounded-full border border-slate-200">
+                    <CheckCircle2 className="w-3 h-3 text-slate-400" />
+                    Stream Finished
+                  </div>
+                )}
+
+                {events.length > 0 && (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    className="h-6 px-2 text-[11px] text-slate-600 hover:text-slate-900 flex items-center gap-1"
+                    onClick={handleCopyLogs}
+                    title="Copy execution logs to clipboard"
+                  >
+                    {isCopied ? <Check className="w-3 h-3 text-emerald-600" /> : <Copy className="w-3 h-3" />}
+                    <span>{isCopied ? 'Copied' : 'Copy'}</span>
+                  </Button>
+                )}
+
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  className="h-6 px-2 text-[11px] text-slate-600 hover:text-slate-900 flex items-center gap-1"
+                  onClick={() => scrollToBottom('smooth')}
+                  title="Scroll to latest log entry"
+                >
+                  <ArrowDown className="w-3 h-3" />
+                  <span>Jump to latest</span>
+                </Button>
+              </div>
             </div>
 
-            <div className="h-60 overflow-y-auto p-3.5 rounded-xl bg-slate-900 text-slate-200 font-mono text-[11px] space-y-1.5 border border-slate-800 shadow-inner">
-              {events.length === 0 ? (
-                <span className="text-slate-500 italic">Connecting to activity event stream...</span>
-              ) : (
-                events.map((ev, idx) => {
-                  const timeStr = new Date(ev.event_timestamp).toLocaleTimeString();
-                  const isErr = ev.severity === 'error';
-                  const isWarn = ev.severity === 'warning';
-                  const isSucc = ev.severity === 'success';
+            <div className="relative">
+              <div
+                ref={logContainerRef}
+                onScroll={handleScroll}
+                className="h-72 overflow-y-auto p-3.5 rounded-xl bg-slate-900 text-slate-200 font-mono text-[11px] space-y-1.5 border border-slate-800 shadow-inner scroll-smooth"
+              >
+                {events.length === 0 ? (
+                  <div className="text-slate-500 italic py-2">
+                    {activeJobId ? 'Waiting for crawl engine execution logs...' : 'Select or start a job to inspect logs.'}
+                  </div>
+                ) : (
+                  events.map((ev, idx) => {
+                    const timeStr = ev.event_timestamp ? new Date(ev.event_timestamp).toLocaleTimeString() : '--:--:--';
+                    const isErr = ev.severity === 'error';
+                    const isWarn = ev.severity === 'warning';
+                    const isSucc = ev.severity === 'success';
 
-                  return (
-                    <div key={idx} className="flex items-start gap-2 leading-relaxed">
-                      <span className="text-slate-500 shrink-0">[{timeStr}]</span>
-                      <span
-                        className={`font-semibold shrink-0 uppercase text-[9px] px-1 rounded ${
-                          isErr
-                            ? 'bg-rose-900/60 text-rose-300'
-                            : isWarn
-                            ? 'bg-amber-900/60 text-amber-300'
-                            : isSucc
-                            ? 'bg-emerald-900/60 text-emerald-300'
-                            : 'bg-slate-800 text-slate-400'
-                        }`}
-                      >
-                        {ev.stage}
-                      </span>
-                      <span className={isErr ? 'text-rose-400' : isWarn ? 'text-amber-300' : 'text-slate-300'}>
-                        {ev.message}
-                      </span>
-                    </div>
-                  );
-                })
+                    return (
+                      <div key={ev.id || `${ev.event_timestamp}-${idx}`} className="flex items-start gap-2 leading-relaxed">
+                        <span className="text-slate-500 shrink-0 select-none">[{timeStr}]</span>
+                        <span
+                          className={`font-semibold shrink-0 uppercase text-[9px] px-1 rounded select-none ${
+                            isErr
+                              ? 'bg-rose-900/60 text-rose-300'
+                              : isWarn
+                              ? 'bg-amber-900/60 text-amber-300'
+                              : isSucc
+                              ? 'bg-emerald-900/60 text-emerald-300'
+                              : 'bg-slate-800 text-slate-400'
+                          }`}
+                        >
+                          {ev.stage || 'info'}
+                        </span>
+                        <span className={`break-all ${isErr ? 'text-rose-400 font-medium' : isWarn ? 'text-amber-300' : isSucc ? 'text-emerald-300' : 'text-slate-300'}`}>
+                          {ev.message}
+                        </span>
+                      </div>
+                    );
+                  })
+                )}
+                <div ref={logsEndRef} />
+              </div>
+
+              {/* Floating "New logs available" pill */}
+              {hasNewLogs && !isAtBottom && (
+                <button
+                  type="button"
+                  onClick={() => scrollToBottom('smooth')}
+                  className="absolute bottom-3 left-1/2 -translate-x-1/2 flex items-center gap-1.5 px-3 py-1 rounded-full bg-indigo-600 hover:bg-indigo-700 text-white text-[11px] font-semibold shadow-lg shadow-black/50 border border-indigo-400/40 transition-all cursor-pointer z-10 animate-bounce"
+                >
+                  <ArrowDown className="w-3 h-3" />
+                  <span>New logs available</span>
+                </button>
               )}
-              <div ref={logsEndRef} />
             </div>
           </div>
         </Card>

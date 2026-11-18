@@ -46,7 +46,8 @@ export const getProviderJobs = async (providerId: string): Promise<PaginatedResp
   return res.data;
 };
 
-export const startProviderResearch = async (providerId: string): Promise<CrawlJob> => {
-  const res = await api.post<CrawlJob>(`/discovery/providers/${providerId}/research`);
+export const startProviderResearch = async (providerId: string, pageLimit?: number): Promise<CrawlJob> => {
+  const url = pageLimit ? `/discovery/providers/${providerId}/research?page_limit=${pageLimit}` : `/discovery/providers/${providerId}/research`;
+  const res = await api.post<CrawlJob>(url);
   return res.data;
 };

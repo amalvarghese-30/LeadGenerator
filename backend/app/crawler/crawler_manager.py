@@ -376,12 +376,14 @@ class CrawlerManager:
         job_id: Optional[str] = None,
         db: Optional[Any] = None,
         is_cancelled_fn: Optional[Callable[[], Awaitable[bool]]] = None,
+        max_pages: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
         """
         Crawl URLs sequentially / bounded concurrency, respecting per-domain rate limits
         and actively verifying cancellation between each page fetch.
         """
-        urls = urls[: self.max_pages]
+        limit = max_pages or self.max_pages
+        urls = urls[:limit]
         total = len(urls)
         results: List[Dict[str, Any]] = []
         counters = {"attempted": 0, "crawled": 0, "failed": 0, "skipped": 0}
@@ -399,7 +401,7 @@ class CrawlerManager:
                 counters["attempted"] += 1
                 if res["status"] == "success":
                     counters["crawled"] += 1
-                    if db and job_id:
+                    if db is not None and job_id is not None:
                         await log_job_event(
                             db, job_id, "crawling", "info", "crawl_page_success",
                             f"Crawled {url} ({res['word_count']} words, method={res['extraction_method']})",
@@ -409,7 +411,7 @@ class CrawlerManager:
                     counters["skipped"] += 1
                 else:
                     counters["failed"] += 1
-                    if db and job_id:
+                    if db is not None and job_id is not None:
                         await log_job_event(
                             db, job_id, "crawling", "warning", "crawl_page_failed",
                             f"Failed {url}: {res['error']}",

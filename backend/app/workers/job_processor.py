@@ -145,11 +145,12 @@ class JobProcessor:
                 await self._handle_cancellation(db, job_id, "discovering")
                 return
 
+            page_limit = job.get("max_pages") or MAX_PAGES_PER_JOB
             discovered_entries = discovery.get("discovered_urls", [])
             discovered_urls = [
                 d["url"] for d in discovered_entries
                 if isinstance(d, dict) and d.get("url")
-            ][:MAX_PAGES_PER_JOB]
+            ][:page_limit]
 
             if not discovered_urls:
                 discovered_urls = [start_url]
@@ -203,6 +204,7 @@ class JobProcessor:
                 job_id=job_id,
                 db=db,
                 is_cancelled_fn=cancel_check,
+                max_pages=page_limit,
             )
 
             # Check if cancelled during crawl
