@@ -5,7 +5,7 @@ and relationship evidence directly from HTML card structures and portfolio grids
 """
 import re
 import logging
-from typing import Dict, List, Any, Optional, Set
+from typing import Dict, List, Any, Optional, Set, Tuple
 from urllib.parse import urlparse, urljoin
 from bs4 import BeautifulSoup, Tag
 
