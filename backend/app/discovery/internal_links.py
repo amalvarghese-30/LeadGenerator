@@ -10,7 +10,7 @@ from urllib.parse import urljoin, urlparse
 from bs4 import BeautifulSoup
 import httpx
 
-from app.discovery.url_normalizer import URLNormalizer
+from app.discovery.url_normalizer import URLNormalizer, is_crawlable_content_url
 from app.utils.ssrf_guard import is_safe_url
 from app.utils.http_client import get_stealth_headers, HAS_HTTP2
 
@@ -31,10 +31,11 @@ class InternalLinkCrawler:
         self.timeout = timeout
         self.normalizer = URLNormalizer()
 
-    async def discover(self, start_url: str) -> List[Dict[str, Any]]:
+    async def discover(self, start_url: str, max_pages: Optional[int] = None) -> List[Dict[str, Any]]:
         """
-        BFS internal link discovery from start_url.
+        BFS internal link discovery from start_url respecting dynamic page limit.
         """
+        effective_max = max_pages or self.max_pages
         is_safe, reason = is_safe_url(start_url)
         if not is_safe:
             logger.warning(f"Internal link crawl start_url rejected by SSRF guard: {reason}")
@@ -51,11 +52,14 @@ class InternalLinkCrawler:
         headers = get_stealth_headers(url=start_url)
 
         async with httpx.AsyncClient(timeout=self.timeout, follow_redirects=True, headers=headers, http2=HAS_HTTP2) as client:
-            while queue and len(visited) < self.max_pages:
+            while queue and len(visited) < effective_max:
                 current_url, depth, parent_url = queue.popleft()
                 norm_url = self.normalizer.normalize(current_url)
 
                 if norm_url in visited or depth > self.max_depth:
+                    continue
+
+                if not is_crawlable_content_url(current_url):
                     continue
 
                 visited.add(norm_url)
@@ -132,12 +136,7 @@ class InternalLinkCrawler:
             # Domain boundary check: must match base_domain or subdomain
             child_domain = self.normalizer.extract_domain(clean_url)
             if child_domain and (child_domain == base_domain or child_domain.endswith(f".{base_domain}")):
-                # Filter out asset extensions
-                path = parsed.path.lower()
-                if not any(path.endswith(ext) for ext in [
-                    ".png", ".jpg", ".jpeg", ".gif", ".svg", ".css", ".js",
-                    ".pdf", ".zip", ".tar", ".gz", ".mp4", ".mp3", ".woff", ".woff2"
-                ]):
+                if is_crawlable_content_url(clean_url):
                     links.append(clean_url)
         return links
 

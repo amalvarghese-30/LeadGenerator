@@ -27,6 +27,7 @@ import httpx
 from app.utils.ssrf_guard import is_safe_url
 from app.discovery.robots import RobotsChecker
 from app.crawler.content_extractor import ContentExtractor
+from app.discovery.url_normalizer import is_crawlable_content_url
 from app.services.rate_limit_service import rate_limit_service
 from app.utils.job_logger import log_job_event
 from app.utils.http_client import get_stealth_headers, is_cloudflare_or_blocked, HAS_HTTP2
@@ -44,7 +45,7 @@ MIN_WORDS_FOR_JS_FALLBACK = 80
 class CrawlerManager:
     def __init__(
         self,
-        max_pages: int = 30,
+        max_pages: int = 50,
         delay_seconds: float = 1.0,
         timeout: int = 25,
         user_agent: Optional[str] = None,
@@ -94,6 +95,36 @@ class CrawlerManager:
     # ------------------------------------------------------------------
     # Single page fetch
     # ------------------------------------------------------------------
+    @staticmethod
+    def _safe_decode_response(resp: Optional[httpx.Response]) -> str:
+        """Ensure response content is properly decoded even if headers bypass httpx decoders."""
+        if not resp:
+            return ""
+        try:
+            enc = (resp.headers.get("content-encoding") or "").lower()
+            raw = resp.content
+            if enc in ("gzip", "x-gzip") or (len(raw) >= 2 and raw[:2] == b"\x1f\x8b"):
+                import gzip
+                try:
+                    return gzip.decompress(raw).decode("utf-8", errors="replace")
+                except Exception:
+                    pass
+            elif enc == "deflate" or (len(raw) >= 2 and raw[:2] in (b"\x78\x9c", b"\x78\x01", b"\x78\xda")):
+                import zlib
+                try:
+                    return zlib.decompress(raw).decode("utf-8", errors="replace")
+                except Exception:
+                    pass
+            elif enc == "br":
+                try:
+                    import brotli
+                    return brotli.decompress(raw).decode("utf-8", errors="replace")
+                except Exception:
+                    pass
+            return resp.text
+        except Exception:
+            return getattr(resp, "text", "")
+
     async def crawl_url(self, url: str) -> Dict[str, Any]:
         result = {
             "url": url,
@@ -233,12 +264,13 @@ class CrawlerManager:
         # Check if HTTP request was completely blocked, failed, or Cloudflare challenge was returned
         needs_browser_fallback = False
         blocked_reason = ""
+        resp_text = self._safe_decode_response(resp) if resp else ""
 
         if resp is None:
             needs_browser_fallback = True
             blocked_reason = "http_connection_failed"
         else:
-            is_blocked, reason = is_cloudflare_or_blocked(resp.status_code, resp.text)
+            is_blocked, reason = is_cloudflare_or_blocked(resp.status_code, resp_text)
             if is_blocked:
                 needs_browser_fallback = True
                 blocked_reason = reason
@@ -265,7 +297,7 @@ class CrawlerManager:
 
             # Canonical URL detection
             try:
-                soup = BeautifulSoup(resp.text[:50000], "lxml")
+                soup = BeautifulSoup(resp_text[:50000], "lxml")
                 canon_tag = soup.find("link", rel=lambda val: val and "canonical" in val.lower())
                 if canon_tag and canon_tag.get("href"):
                     result["canonical_url"] = urljoin(final_url, canon_tag["href"].strip())
@@ -274,7 +306,7 @@ class CrawlerManager:
 
             # Extract content
             try:
-                content = self.extractor.extract(resp.text, final_url)
+                content = self.extractor.extract(resp_text, final_url)
             except Exception as e:
                 logger.debug("Extraction error on %s: %s", url, e)
 
@@ -336,7 +368,7 @@ class CrawlerManager:
                 "h1": content.get("h1", ""),
                 "h2s": content.get("h2s", []),
                 "main_text": main_text,
-                "raw_html": content.get("raw_html") or (resp.text if resp else ""),
+                "raw_html": content.get("raw_html") or (resp_text if resp else ""),
                 "word_count": word_count,
                 "public_emails": content.get("public_emails", []),
                 "public_phones": content.get("public_phones", []),
@@ -483,7 +515,9 @@ class CrawlerManager:
     ) -> List[Dict[str, Any]]:
         results: List[Dict[str, Any]] = []
         effective_max = max_pages if max_pages is not None else self.max_pages
-        urls_to_crawl = urls[:effective_max]
+        # Prioritize and filter valid crawlable content pages
+        valid_urls = [u for u in urls if is_crawlable_content_url(u)]
+        urls_to_crawl = valid_urls[:effective_max] if valid_urls else urls[:effective_max]
         total = len(urls_to_crawl)
         cancel_check = is_cancelled_fn or cancellation_check
 

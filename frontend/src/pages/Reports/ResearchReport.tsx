@@ -507,9 +507,30 @@ export const ResearchReport: React.FC = () => {
 
                         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-xs">
                             <div>
+                                <span className="text-slate-500 block">Research Crawl Limit</span>
+                                <span className="text-sm font-bold text-slate-800">
+                                    {job.max_pages ?? 50} pages
+                                </span>
+                            </div>
+
+                            <div>
                                 <span className="text-slate-500 block">Pages Crawled / Analysed</span>
                                 <span className="text-sm font-bold text-slate-800">
-                                    {job.pages_crawled} / {metrics.pages_analysed ?? job.pages_crawled}
+                                    {job.pages_crawled ?? 0} / {job.pages_analysed ?? metrics.pages_analysed ?? job.pages_crawled ?? 0}
+                                </span>
+                            </div>
+
+                            <div>
+                                <span className="text-slate-500 block">Discovered / Attempted</span>
+                                <span className="text-sm font-bold text-slate-800">
+                                    {job.pages_discovered ?? 0} / {job.pages_attempted ?? 0}
+                                </span>
+                            </div>
+
+                            <div>
+                                <span className="text-slate-500 block">Failed / Skipped</span>
+                                <span className="text-sm font-bold text-slate-800">
+                                    {job.pages_failed ?? 0} / {job.pages_skipped ?? 0}
                                 </span>
                             </div>
 

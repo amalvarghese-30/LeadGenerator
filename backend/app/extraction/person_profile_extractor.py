@@ -22,12 +22,25 @@ TITLE_SUFFIX_REGEX = re.compile(
     re.IGNORECASE
 )
 
+# Known error page and non-person phrases / indicators
+ERROR_PAGE_INDICATORS = {
+    "page not found", "404 not found", "access denied", "403 forbidden",
+    "internal server error", "500 error", "502 bad gateway", "503 service unavailable",
+    "bad request", "error 404", "not found", "site not found", "document moved",
+    "temporarily unavailable", "under construction", "something went wrong",
+    "oops", "page cannot be found", "request timed out"
+}
+
 # Generic non-person words that should never be accepted as person names
 INVALID_NAME_WORDS = {
     "about", "contact", "home", "privacy", "policy", "terms", "service", "services",
     "careers", "company", "team", "features", "pricing", "login", "register",
     "signup", "welcome", "category", "tag", "archive", "blog", "news", "articles",
-    "wiki", "wikipoint", "wikipedia", "search", "faq", "help", "support", "dashboard"
+    "wiki", "wikipoint", "wikipedia", "search", "faq", "help", "support", "dashboard",
+    "page", "not", "found", "error", "404", "denied", "access", "forbidden", "unauthorized",
+    "bad", "request", "server", "timeout", "gateway", "moved", "redirect", "maintenance",
+    "under", "construction", "loading", "untitled", "document", "oops", "sorry",
+    "something", "went", "wrong", "blank", "default", "403", "500", "502", "503",
 }
 
 # Designation extraction patterns from bio sentences
@@ -59,6 +72,15 @@ class PersonProfileExtractor:
         h1 = page_data.get("h1") or ""
         main_text = page_data.get("main_text") or ""
         schema_persons = page_data.get("schema_persons") or []
+
+        # Reject error pages, 404s, and access denied messages upfront
+        title_l = title.lower()
+        h1_l = h1.lower()
+        text_start = main_text.lower()[:300]
+        if any(err in title_l or err in h1_l for err in ERROR_PAGE_INDICATORS):
+            return False, 0.0, "rejected_error_page_heading"
+        if "404 not found" in text_start or "page not found" in text_start or "access denied" in text_start:
+            return False, 0.0, "rejected_error_page_content"
 
         score = 0.0
         reasons = []
@@ -281,10 +303,19 @@ class PersonProfileExtractor:
         cleaned = TITLE_SUFFIX_REGEX.sub("", text).strip()
         cleaned = re.sub(r'\[[0-9]+\]', '', cleaned)  # remove wiki reference brackets
         cleaned = cleaned.replace("Category:", "").replace("User:", "")
-        return cleaned.strip() or None
+        clean_stripped = cleaned.strip()
+        if not clean_stripped:
+            return None
+        cand_lower = clean_stripped.lower()
+        if any(err in cand_lower for err in ERROR_PAGE_INDICATORS):
+            return None
+        return clean_stripped
 
     def _is_likely_person_name(self, text: str) -> bool:
         if not text:
+            return False
+        clean_lower = text.strip().lower()
+        if any(err in clean_lower for err in ERROR_PAGE_INDICATORS):
             return False
         tokens = text.split()
         if len(tokens) < 2 or len(tokens) > 5:

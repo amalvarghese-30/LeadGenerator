@@ -51,10 +51,24 @@ import { CrawlJob, JobEvent } from '../../types';
 export const Scanner: React.FC = () => {
   // Input bar state
   const [targetUrl, setTargetUrl] = useState('https://theperson.in/');
-  const [pageLimit, setPageLimit] = useState(30);
+  const [pageLimit, setPageLimit] = useState(50);
+  const [isCustomLimit, setIsCustomLimit] = useState(false);
+  const [customLimitInput, setCustomLimitInput] = useState('');
+  const [limitError, setLimitError] = useState<string | null>(null);
   const [isDeepScan, setIsDeepScan] = useState(false);
   const [isStarting, setIsStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const handleCustomLimitChange = (val: string) => {
+    setCustomLimitInput(val);
+    const num = parseInt(val, 10);
+    if (!val || isNaN(num) || num < 1 || num > 500) {
+      setLimitError('Page limit must be between 1 and 500');
+    } else {
+      setLimitError(null);
+      setPageLimit(num);
+    }
+  };
 
   // Active Job & Results
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
@@ -418,6 +432,17 @@ export const Scanner: React.FC = () => {
       return;
     }
 
+    if (isCustomLimit) {
+      const num = parseInt(customLimitInput, 10);
+      if (isNaN(num) || num < 1 || num > 500) {
+        setError('Page crawl limit must be an integer between 1 and 500.');
+        return;
+      }
+    } else if (!pageLimit || pageLimit < 1 || pageLimit > 500) {
+      setError('Page crawl limit must be between 1 and 500.');
+      return;
+    }
+
     setIsStarting(true);
     setEvents([]);
     setResults([]);
@@ -604,23 +629,56 @@ export const Scanner: React.FC = () => {
               />
             </div>
 
-            <div className="flex items-center gap-2">
-              <select
-                value={pageLimit}
-                onChange={(e) => setPageLimit(Number(e.target.value))}
-                disabled={isStarting}
-                className="bg-slate-950 border border-slate-700 text-slate-200 text-xs font-semibold rounded-xl px-3.5 py-3.5 focus:border-cyan-500 outline-none cursor-pointer"
-                title="Page Crawl Limit"
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+              <div
+                className="flex items-center gap-1.5 bg-slate-950 border border-slate-700 rounded-xl px-3 py-2"
+                title="Maximum number of eligible pages the crawler will process (1 - 500)."
               >
-                <option value={10}>10 Pages</option>
-                <option value={20}>20 Pages</option>
-                <option value={30}>30 Pages</option>
-                <option value={50}>50 Pages</option>
-              </select>
+                <span className="text-[11px] font-semibold text-slate-400 pl-1 hidden md:inline">Limit:</span>
+                <select
+                  value={isCustomLimit ? 'custom' : pageLimit}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    if (val === 'custom') {
+                      setIsCustomLimit(true);
+                      setCustomLimitInput(String(pageLimit));
+                    } else {
+                      setIsCustomLimit(false);
+                      setPageLimit(Number(val));
+                      setLimitError(null);
+                    }
+                  }}
+                  disabled={isStarting}
+                  className="bg-transparent text-slate-200 text-xs font-semibold focus:outline-none cursor-pointer py-1 pr-1"
+                >
+                  <option value={15} className="bg-slate-900 text-slate-200">15 Pages</option>
+                  <option value={30} className="bg-slate-900 text-slate-200">30 Pages</option>
+                  <option value={50} className="bg-slate-900 text-slate-200">50 Pages (Default)</option>
+                  <option value={100} className="bg-slate-900 text-slate-200">100 Pages</option>
+                  <option value={200} className="bg-slate-900 text-slate-200">200 Pages</option>
+                  <option value="custom" className="bg-slate-900 text-slate-200">Custom (1-500)...</option>
+                </select>
+
+                {isCustomLimit && (
+                  <div className="flex items-center gap-1 border-l border-slate-700 pl-2">
+                    <input
+                      type="number"
+                      min={1}
+                      max={500}
+                      value={customLimitInput}
+                      onChange={(e) => handleCustomLimitChange(e.target.value)}
+                      placeholder="1-500"
+                      disabled={isStarting}
+                      className="w-16 bg-slate-900 border border-slate-600 focus:border-cyan-500 rounded px-2 py-1 text-xs text-white font-mono outline-none"
+                    />
+                    <span className="text-[11px] text-slate-400">pg</span>
+                  </div>
+                )}
+              </div>
 
               <button
                 type="submit"
-                disabled={isStarting}
+                disabled={isStarting || Boolean(limitError)}
                 className="bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold px-6 py-3.5 rounded-xl text-sm transition-all shadow-lg shadow-cyan-500/20 flex items-center justify-center gap-2 shrink-0 cursor-pointer disabled:opacity-50"
               >
                 {isStarting ? (
@@ -765,6 +823,38 @@ export const Scanner: React.FC = () => {
                 </div>
               );
             })}
+          </div>
+
+          {/* Crawler Pipeline Breakdown & Live Progress */}
+          <div className="mt-4 pt-3 border-t border-slate-800/80 grid grid-cols-2 sm:grid-cols-4 md:grid-cols-7 gap-2 text-center">
+            <div className="p-2 rounded-lg bg-slate-950/80 border border-slate-800">
+              <span className="text-[10px] uppercase font-bold text-slate-400 block">Target Limit</span>
+              <span className="text-xs font-mono font-bold text-cyan-400">{job.max_pages ?? 50}</span>
+            </div>
+            <div className="p-2 rounded-lg bg-slate-950/80 border border-slate-800">
+              <span className="text-[10px] uppercase font-bold text-slate-400 block">Discovered</span>
+              <span className="text-xs font-mono font-bold text-slate-200">{job.pages_discovered ?? 0}</span>
+            </div>
+            <div className="p-2 rounded-lg bg-slate-950/80 border border-slate-800">
+              <span className="text-[10px] uppercase font-bold text-slate-400 block">Attempted</span>
+              <span className="text-xs font-mono font-bold text-slate-200">{job.pages_attempted ?? 0}</span>
+            </div>
+            <div className="p-2 rounded-lg bg-emerald-950/40 border border-emerald-900/40">
+              <span className="text-[10px] uppercase font-bold text-emerald-400 block">Crawled</span>
+              <span className="text-xs font-mono font-bold text-emerald-300">{job.pages_crawled ?? 0}</span>
+            </div>
+            <div className="p-2 rounded-lg bg-amber-950/40 border border-amber-900/40">
+              <span className="text-[10px] uppercase font-bold text-amber-400 block">Skipped</span>
+              <span className="text-xs font-mono font-bold text-amber-300">{job.pages_skipped ?? 0}</span>
+            </div>
+            <div className="p-2 rounded-lg bg-rose-950/40 border border-rose-900/40">
+              <span className="text-[10px] uppercase font-bold text-rose-400 block">Failed</span>
+              <span className="text-xs font-mono font-bold text-rose-300">{job.pages_failed ?? 0}</span>
+            </div>
+            <div className="p-2 rounded-lg bg-indigo-950/40 border border-indigo-900/40 col-span-2 sm:col-span-1">
+              <span className="text-[10px] uppercase font-bold text-indigo-400 block">Analysed</span>
+              <span className="text-xs font-mono font-bold text-indigo-300">{job.pages_analysed ?? job.pages_crawled ?? 0}</span>
+            </div>
           </div>
         </section>
       )}
@@ -1242,7 +1332,7 @@ export const Scanner: React.FC = () => {
               </div>
               <div className="text-xs font-bold text-white truncate">{j.starting_url}</div>
               <div className="flex items-center justify-between text-[11px] text-slate-400 mt-2 font-mono">
-                <span>{j.pages_crawled || 0} pages</span>
+                <span>{j.pages_crawled || 0} / {j.max_pages || 50} pages</span>
                 <span>{j.references_found || 0} clients</span>
               </div>
             </div>

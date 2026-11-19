@@ -31,6 +31,8 @@ from app.enrichment.contact_enrichment_service import ContactEnrichmentService
 from app.enrichment.company_enrichment_service import CompanyEnrichmentService
 from app.utils.job_logger import log_job_event
 from app.utils.url_utils import extract_domain
+from app.discovery.url_normalizer import is_crawlable_content_url
+from app.config import settings
 
 logging.basicConfig(
     level=logging.INFO,
@@ -39,7 +41,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 LOCK_TIMEOUT_MINUTES = 20
-MAX_PAGES_PER_JOB = 30
+MAX_PAGES_PER_JOB = getattr(settings, "CRAWLER_MAX_PAGES_PER_JOB", 50)
 
 
 def _err(stage: str, message: str, url: Optional[str] = None, err_type: str = "unknown", traceback_str: Optional[str] = None) -> Dict:
@@ -155,25 +157,25 @@ class JobProcessor:
         warnings: List[Dict] = []
 
         # ---------- Stage 1: URL discovery ----------
+        page_limit = job.get("max_pages") or MAX_PAGES_PER_JOB
         discovered_urls: List[str] = []
         try:
             await self._stage(db, job_id, "discovering", 5)
-            await log_job_event(db, job_id, "discovering", "info", "discovery_source_started", f"Starting discovery on {start_url}")
+            await log_job_event(db, job_id, "discovering", "info", "discovery_source_started", f"Starting discovery on {start_url} (limit: {page_limit} pages)")
 
-            discovery = await self.discovery_manager.discover_all_urls(start_url)
+            discovery = await self.discovery_manager.discover_all_urls(start_url, max_urls=page_limit)
 
             if await self.is_job_cancelled(db, job_id):
                 await self._handle_cancellation(db, job_id, "discovering")
                 return
 
-            page_limit = job.get("max_pages") or MAX_PAGES_PER_JOB
             discovered_entries = discovery.get("discovered_urls", [])
             discovered_urls = [
                 d["url"] for d in discovered_entries
-                if isinstance(d, dict) and d.get("url")
+                if isinstance(d, dict) and d.get("url") and is_crawlable_content_url(d.get("url"))
             ][:page_limit]
 
-            if not discovered_urls:
+            if not discovered_urls and is_crawlable_content_url(start_url):
                 discovered_urls = [start_url]
 
             for entry in discovered_entries[:10]:
@@ -189,7 +191,13 @@ class JobProcessor:
             await db.crawl_jobs.update_one(
                 {"_id": ObjectId(job_id)},
                 {"$set": {
+                    "max_pages": page_limit,
                     "pages_discovered": len(discovered_urls),
+                    "pages_attempted": 0,
+                    "pages_crawled": 0,
+                    "pages_failed": 0,
+                    "pages_skipped": 0,
+                    "pages_analysed": 0,
                     "discovery_stats": discovery.get("sources_breakdown", {}),
                     "progress_pct": 20,
                     "updated_at": datetime.now(timezone.utc),
@@ -204,7 +212,7 @@ class JobProcessor:
             logger.exception("[DISCOVERY] failed")
             errors.append(_err("discovery", str(e), err_type="discovery"))
             await log_job_event(db, job_id, "discovering", "error", "discovery_source_failed", f"Discovery error: {e}")
-            discovered_urls = [start_url]
+            discovered_urls = [start_url] if is_crawlable_content_url(start_url) else []
 
         # Check cancellation before crawl
         if await self.is_job_cancelled(db, job_id):
@@ -213,9 +221,13 @@ class JobProcessor:
 
         # ---------- Stage 2: Crawl ----------
         crawled_pages: List[Dict] = []
+        pages_attempted = 0
+        pages_crawled = 0
+        pages_failed = 0
+        pages_skipped = 0
         try:
             await self._stage(db, job_id, "crawling", 25)
-            await log_job_event(db, job_id, "crawling", "info", "crawl_started", f"Starting crawler on {len(discovered_urls)} URLs")
+            await log_job_event(db, job_id, "crawling", "info", "crawl_started", f"Starting crawler on {len(discovered_urls)} URLs (max: {page_limit})")
 
             async def cancel_check():
                 return await self.is_job_cancelled(db, job_id)
@@ -236,6 +248,23 @@ class JobProcessor:
             failed = [p for p in crawled_pages if p.get("status") == "failed"]
             skipped = [p for p in crawled_pages if p.get("status") == "skipped"]
 
+            pages_attempted = len(crawled_pages)
+            pages_crawled = len(success)
+            pages_failed = len(failed)
+            pages_skipped = len(skipped)
+
+            await db.crawl_jobs.update_one(
+                {"_id": ObjectId(job_id)},
+                {"$set": {
+                    "pages_attempted": pages_attempted,
+                    "pages_crawled": pages_crawled,
+                    "pages_failed": pages_failed,
+                    "pages_skipped": pages_skipped,
+                    "progress_pct": 45,
+                    "updated_at": datetime.now(timezone.utc),
+                }},
+            )
+
             for p in failed:
                 errors.append(_err(
                     "crawling", p.get("error") or "unknown",
@@ -249,7 +278,7 @@ class JobProcessor:
 
             await log_job_event(
                 db, job_id, "crawling", "success", "crawl_completed",
-                f"Crawl completed: {len(success)} successful, {len(failed)} failed, {len(skipped)} skipped"
+                f"Crawl completed: {pages_crawled} successful, {pages_failed} failed, {pages_skipped} skipped"
             )
 
             if not success:
@@ -785,6 +814,13 @@ class JobProcessor:
                 discovered_person_profiles=discovered_person_profiles,
                 page_diagnostics=page_diagnostics,
                 discovered_company_ids=discovered_company_ids,
+                max_pages=page_limit,
+                pages_discovered=len(discovered_urls),
+                pages_attempted=pages_attempted,
+                pages_crawled=pages_crawled,
+                pages_failed=pages_failed,
+                pages_skipped=pages_skipped,
+                pages_analysed=pages_analysed,
             )
             await log_job_event(db, job_id, "generating_report", "success", "report_generated", "Research report generated successfully")
         except Exception as e:
@@ -804,7 +840,14 @@ class JobProcessor:
             data_quality_metrics=data_quality_metrics,
             job_type=job_type,
             report_mode=report_mode,
-            person_profile=primary_profile
+            person_profile=primary_profile,
+            pages_discovered=len(discovered_urls),
+            pages_attempted=pages_attempted,
+            pages_crawled=pages_crawled,
+            pages_failed=pages_failed,
+            pages_skipped=pages_skipped,
+            pages_analysed=pages_analysed,
+            max_pages=page_limit,
         )
         await log_job_event(
             db, job_id, "completed", "success", "job_completed",
@@ -829,7 +872,14 @@ class JobProcessor:
     async def _finish(self, db, job_id, status, errors, warnings,
                       refs, contacts, companies, leads, data_quality_metrics: Optional[Dict] = None,
                       job_type: str = "full_research", report_mode: str = "provider",
-                      person_profile: Optional[Dict] = None):
+                      person_profile: Optional[Dict] = None,
+                      pages_discovered: Optional[int] = None,
+                      pages_attempted: Optional[int] = None,
+                      pages_crawled: Optional[int] = None,
+                      pages_failed: Optional[int] = None,
+                      pages_skipped: Optional[int] = None,
+                      pages_analysed: Optional[int] = None,
+                      max_pages: Optional[int] = None):
         now = datetime.now(timezone.utc)
         update_doc = {
             "status": status,
@@ -848,6 +898,20 @@ class JobProcessor:
             "completed_at": now,
             "updated_at": now,
         }
+        if pages_discovered is not None:
+            update_doc["pages_discovered"] = pages_discovered
+        if pages_attempted is not None:
+            update_doc["pages_attempted"] = pages_attempted
+        if pages_crawled is not None:
+            update_doc["pages_crawled"] = pages_crawled
+        if pages_failed is not None:
+            update_doc["pages_failed"] = pages_failed
+        if pages_skipped is not None:
+            update_doc["pages_skipped"] = pages_skipped
+        if pages_analysed is not None:
+            update_doc["pages_analysed"] = pages_analysed
+        if max_pages is not None:
+            update_doc["max_pages"] = max_pages
         if person_profile:
             update_doc["person_profile"] = person_profile
         if data_quality_metrics:
@@ -884,7 +948,14 @@ class JobProcessor:
                                job_type: str = "full_research",
                                discovered_person_profiles: Optional[List[Dict]] = None,
                                page_diagnostics: Optional[List[Dict]] = None,
-                               discovered_company_ids: Optional[List[str]] = None):
+                               discovered_company_ids: Optional[List[str]] = None,
+                               max_pages: Optional[int] = None,
+                               pages_discovered: Optional[int] = None,
+                               pages_attempted: Optional[int] = None,
+                               pages_crawled: Optional[int] = None,
+                               pages_failed: Optional[int] = None,
+                               pages_skipped: Optional[int] = None,
+                               pages_analysed: Optional[int] = None):
         success_pages = [p for p in pages if p.get("status") == "success"]
         failed_pages = [p for p in pages if p.get("status") == "failed"]
 
@@ -959,9 +1030,14 @@ class JobProcessor:
             "job_type": job_type,
             "report_mode": report_mode,
             "status": "completed",
-            "pages_discovered": len(pages),
+            "max_pages": max_pages,
+            "pages_discovered": pages_discovered if pages_discovered is not None else len(pages),
+            "pages_attempted": pages_attempted if pages_attempted is not None else len(pages),
+            "pages_crawled": pages_crawled if pages_crawled is not None else len(success_pages),
             "pages_processed": len(success_pages),
-            "pages_failed": len(failed_pages),
+            "pages_failed": pages_failed if pages_failed is not None else len(failed_pages),
+            "pages_skipped": pages_skipped if pages_skipped is not None else 0,
+            "pages_analysed": pages_analysed if pages_analysed is not None else len(success_pages),
             "references_found": references_found,
             "companies": enriched_companies,
             "person_profile": primary_profile,

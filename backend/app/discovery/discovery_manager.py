@@ -27,7 +27,7 @@ from app.discovery.common_crawl import CommonCrawlDiscovery
 from app.discovery.wayback import WaybackDiscovery
 from app.discovery.google_dorking import GoogleDorkingHelper
 from app.discovery.ddgs_search import DDGSSearch
-from app.discovery.url_normalizer import URLNormalizer
+from app.discovery.url_normalizer import URLNormalizer, is_crawlable_content_url
 from app.utils.ssrf_guard import is_safe_url
 from app.config import settings
 
@@ -69,7 +69,7 @@ def calculate_priority(category: str) -> int:
 
 class DiscoveryManager:
     def __init__(self, max_pages: Optional[int] = None):
-        self.max_pages = max_pages or getattr(settings, "CRAWLER_MAX_PAGES_PER_JOB", 30)
+        self.max_pages = max_pages or getattr(settings, "CRAWLER_MAX_PAGES_PER_JOB", 50)
         self.sitemap_parser = SitemapParser()
         self.robots_checker = RobotsChecker()
         self.rss_discovery = RSSDiscovery()
@@ -157,7 +157,7 @@ class DiscoveryManager:
         # 4. Internal website links
         async def run_internal():
             try:
-                items = await self.internal_crawler.discover(start_url)
+                items = await self.internal_crawler.discover(start_url, max_pages=limit)
                 return "internal_links", items, "success"
             except Exception as e:
                 errors.append(f"internal_links: {e}")
@@ -232,6 +232,8 @@ class DiscoveryManager:
             for item in items:
                 u = item.get("url") if isinstance(item, dict) else str(item)
                 if not u or not is_safe_url(u)[0]:
+                    continue
+                if not is_crawlable_content_url(u):
                     continue
                 norm = self.normalizer.normalize(u)
                 if norm in all_urls:

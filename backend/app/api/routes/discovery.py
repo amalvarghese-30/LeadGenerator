@@ -50,7 +50,7 @@ async def search_providers_route(
 @router.post("/providers/{provider_id}/research")
 async def research_provider_route(
     provider_id: str,
-    page_limit: Optional[int] = Query(None, ge=1, le=100),
+    page_limit: Optional[int] = Query(None, ge=1, le=500),
     job_type: Optional[str] = Query("full_research"),
     db: AsyncIOMotorDatabase = Depends(get_db),
     user: dict = Depends(get_current_user),
@@ -76,12 +76,23 @@ async def research_provider_route(
         if any(seg in path_l for seg in ["/wiki/", "/person/", "/profile/", "/people/", "/author/", "/leadership/", "/executive/"]):
             eff_job_type = "person_profile"
 
+    safety_max = getattr(settings, "CRAWLER_SAFETY_MAX_PAGES", 500)
+    default_max = getattr(settings, "CRAWLER_MAX_PAGES_PER_JOB", 50)
+    if page_limit is not None:
+        if page_limit < 1:
+            raise HTTPException(400, "page_limit must be at least 1")
+        if page_limit > safety_max:
+            raise HTTPException(400, f"page_limit cannot exceed safety limit of {safety_max}")
+        eff_max_pages = page_limit
+    else:
+        eff_max_pages = default_max
+
     now = datetime.now(timezone.utc)
     job_doc = {
         "provider_id": provider_id,
         "starting_url": target_url,
         "job_type": eff_job_type,
-        "max_pages": page_limit or 30,
+        "max_pages": eff_max_pages,
         "status": "pending",
         "current_stage": "queued",
         "progress_pct": 0,
@@ -90,6 +101,7 @@ async def research_provider_route(
         "pages_crawled": 0,
         "pages_failed": 0,
         "pages_skipped": 0,
+        "pages_analysed": 0,
         "references_found": 0,
         "contacts_created": 0,
         "companies_created": 0,

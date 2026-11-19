@@ -113,7 +113,7 @@ export const Providers: React.FC = () => {
   const handleStartResearch = async (id: string) => {
     setResearchingId(id);
     try {
-      await startProviderResearch(id);
+      await startProviderResearch(id, 50);
       fetchProviders();
       toast.success('Website research job dispatched to background crawler');
     } catch (err: any) {

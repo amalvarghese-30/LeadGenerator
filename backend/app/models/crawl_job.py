@@ -23,6 +23,7 @@ class CrawlJobDocument(BaseModel):
     status: str = "pending"
     current_stage: str = "queued"
     progress_pct: int = 0
+    max_pages: int = 50
 
     # Canonical counters — used everywhere
     pages_discovered: int = 0
@@ -30,6 +31,7 @@ class CrawlJobDocument(BaseModel):
     pages_crawled: int = 0       # successfully fetched AND extracted
     pages_failed: int = 0
     pages_skipped: int = 0
+    pages_analysed: int = 0      # successfully fetched pages passed to analysis
     pages_ai_processed: int = 0
 
     references_found: int = 0

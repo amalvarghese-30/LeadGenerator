@@ -8,31 +8,92 @@ import tldextract
 TRACKING_PARAMS = {
     "utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content",
     "fbclid", "gclid", "msclkid", "ref", "source", "_ga", "mc_cid",
-    "mc_eid", "yclid", "gbraid", "wbraid", "twclid", "igshid",
+    "mc_eid", "yclid", "gbraid", "wbraid", "twclid", "igshid", "_gl",
 }
+
+STATIC_ASSET_EXTENSIONS = {
+    ".css", ".js", ".mjs", ".map",
+    ".jpg", ".jpeg", ".png", ".gif", ".svg", ".webp", ".ico", ".bmp", ".tiff",
+    ".woff", ".woff2", ".ttf", ".eot", ".otf",
+    ".mp4", ".mp3", ".wav", ".avi", ".mov", ".wmv", ".webm", ".m4a", ".ogg",
+    ".pdf", ".zip", ".tar", ".gz", ".rar", ".7z", ".bz2", ".xz",
+    ".exe", ".dmg", ".apk", ".bin", ".iso", ".msi",
+    ".csv", ".tsv", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
+}
+
+EXCLUDED_PATH_PATTERNS = [
+    "/wp-content/plugins/",
+    "/wp-content/themes/",
+    "/wp-includes/",
+    "/cdn-cgi/",
+]
+
+EXCLUDED_AUTH_PATTERNS = [
+    "/wp-admin",
+    "/wp-login",
+    "/cart",
+    "/checkout",
+    "/my-account",
+    "/logout",
+    "/log-out",
+]
+
+
+def is_crawlable_content_url(url: str) -> bool:
+    """
+    Returns True if the URL points to genuine website content.
+    Filters out static assets, binary downloads, tracking endpoints, and login/admin paths.
+    """
+    if not url or not isinstance(url, str):
+        return False
+    try:
+        parsed = urlparse(url.strip())
+        if parsed.scheme.lower() not in ("http", "https"):
+            return False
+
+        path_lower = parsed.path.lower()
+
+        # 1. Reject static asset extensions
+        for ext in STATIC_ASSET_EXTENSIONS:
+            if path_lower.endswith(ext):
+                return False
+
+        # 2. Reject internal CMS asset directories
+        for pat in EXCLUDED_PATH_PATTERNS:
+            if pat in path_lower:
+                return False
+
+        # 3. Reject administrative, cart, and authentication paths
+        for pat in EXCLUDED_AUTH_PATTERNS:
+            if pat in path_lower:
+                return False
+
+        return True
+    except Exception:
+        return False
 
 
 class URLNormalizer:
-    def normalize(self, url: str) -> str:
-        """Normalize URL for deduplication: lowercase, remove fragment, sort query params."""
+    def normalize(self, url: str, strip_tracking: bool = True) -> str:
+        """Normalize URL for deduplication: lowercase scheme/host, strip tracking params, remove fragment."""
         if not url or not isinstance(url, str):
             return ""
         try:
             parsed = urlparse(url.strip())
-            # Lowercase scheme and netloc
             scheme = parsed.scheme.lower()
             netloc = parsed.netloc.lower()
-            # Remove trailing slash from path (except for root)
             path = parsed.path
             if path != "/" and path.endswith("/"):
                 path = path.rstrip("/")
-            # Sort query params for deterministic comparison
+
             if parsed.query:
                 params = parse_qs(parsed.query, keep_blank_values=True)
+                if strip_tracking:
+                    params = {k: v for k, v in params.items() if k.lower() not in TRACKING_PARAMS}
                 sorted_query = urlencode(sorted(params.items()), doseq=True)
             else:
                 sorted_query = ""
-            # Drop fragment
+
             normalized = urlunparse((scheme, netloc, path, parsed.params, sorted_query, ""))
             return normalized
         except Exception:

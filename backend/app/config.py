@@ -41,7 +41,8 @@ class Settings(BaseSettings):
     CRAWLER_USER_AGENT: str = "LeadIntelBot/1.0 (+https://leadintel.io/bot)"
     CRAWLER_DELAY_SECONDS: float = 1.0
     CRAWLER_MAX_RETRIES: int = 3
-    CRAWLER_MAX_PAGES_PER_JOB: int = 30
+    CRAWLER_MAX_PAGES_PER_JOB: int = 50
+    CRAWLER_SAFETY_MAX_PAGES: int = 500
     CRAWLER_CONCURRENCY: int = 3
     PLAYWRIGHT_HEADLESS: bool = True
 

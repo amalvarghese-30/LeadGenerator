@@ -39,6 +39,10 @@ NON_NAME_WORDS = {
     "projects", "clients", "reviews", "read more", "learn more", "view profile",
     "our story", "leadership", "management", "board", "advisors", "directors",
     "executives", "founders", "members", "staff", "meet", "who we are", "office",
+    "page", "not", "found", "error", "404", "denied", "access", "forbidden", "unauthorized",
+    "bad", "request", "server", "timeout", "gateway", "moved", "redirect", "maintenance",
+    "under", "construction", "loading", "untitled", "document", "oops", "sorry",
+    "something", "went", "wrong", "blank", "default", "403", "500", "502", "503",
 }
 
 

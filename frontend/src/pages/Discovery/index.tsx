@@ -105,7 +105,7 @@ export const Discovery: React.FC = () => {
       });
       const providerId = (provider as any).id || (provider as any)._id;
 
-      const createdJob = await startProviderResearch(providerId);
+      const createdJob = await startProviderResearch(providerId, 50);
       setActiveJobId(createdJob.id || (createdJob as any)._id);
       setJob(createdJob);
     } catch (err: any) {

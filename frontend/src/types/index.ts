@@ -236,6 +236,8 @@ export interface CrawlJob {
   pages_crawled: number;
   pages_failed: number;
   pages_skipped: number;
+  pages_analysed?: number;
+  max_pages?: number;
 
   references_found: number;
   contacts_created: number;

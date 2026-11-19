@@ -43,10 +43,24 @@ export const WebsiteIntelligence: React.FC = () => {
 
   // Launcher state
   const [targetUrl, setTargetUrl] = useState('https://theperson.in/');
-  const [pageLimit, setPageLimit] = useState(30);
+  const [pageLimit, setPageLimit] = useState(50);
+  const [isCustomLimit, setIsCustomLimit] = useState(false);
+  const [customLimitInput, setCustomLimitInput] = useState('');
+  const [limitError, setLimitError] = useState<string | null>(null);
   const [workflowMode, setWorkflowMode] = useState<'full_research' | 'person_profile'>('full_research');
   const [isStarting, setIsStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const handleCustomLimitChange = (val: string) => {
+    setCustomLimitInput(val);
+    const num = parseInt(val, 10);
+    if (!val || isNaN(num) || num < 1 || num > 500) {
+      setLimitError('Page limit must be between 1 and 500');
+    } else {
+      setLimitError(null);
+      setPageLimit(num);
+    }
+  };
 
   // Active Job state
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
@@ -391,6 +405,17 @@ export const WebsiteIntelligence: React.FC = () => {
     e.preventDefault();
     if (!targetUrl.trim()) return;
 
+    if (isCustomLimit) {
+      const num = parseInt(customLimitInput, 10);
+      if (isNaN(num) || num < 1 || num > 500) {
+        setError('Page crawl limit must be an integer between 1 and 500.');
+        return;
+      }
+    } else if (!pageLimit || pageLimit < 1 || pageLimit > 500) {
+      setError('Page crawl limit must be between 1 and 500.');
+      return;
+    }
+
     setError(null);
     setIsStarting(true);
     setEvents([]);
@@ -536,20 +561,49 @@ export const WebsiteIntelligence: React.FC = () => {
               />
             </div>
             <div className="sm:col-span-2">
-              <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-1">
+              <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-1" title="Maximum number of eligible pages the crawler will process (1 - 500).">
                 Page Limit
               </label>
-              <select
-                value={pageLimit}
-                onChange={(e) => setPageLimit(Number(e.target.value))}
-                disabled={Boolean(activeJobId && !isJobTerminal)}
-                className="w-full text-xs font-semibold py-2.5 px-3 rounded-xl border border-slate-200 bg-white focus:outline-hidden focus:ring-2 focus:ring-blue-500/20"
-              >
-                <option value={10}>10 pages</option>
-                <option value={20}>20 pages</option>
-                <option value={30}>30 pages (Default)</option>
-                <option value={50}>50 pages (Deep)</option>
-              </select>
+              <div className="flex items-center gap-1.5">
+                <select
+                  value={isCustomLimit ? 'custom' : pageLimit}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    if (val === 'custom') {
+                      setIsCustomLimit(true);
+                      setCustomLimitInput(String(pageLimit));
+                    } else {
+                      setIsCustomLimit(false);
+                      setPageLimit(Number(val));
+                      setLimitError(null);
+                    }
+                  }}
+                  disabled={Boolean(activeJobId && !isJobTerminal)}
+                  className="w-full text-xs font-semibold py-2.5 px-3 rounded-xl border border-slate-200 bg-white focus:outline-hidden focus:ring-2 focus:ring-blue-500/20"
+                >
+                  <option value={15}>15 pages</option>
+                  <option value={30}>30 pages</option>
+                  <option value={50}>50 pages (Default)</option>
+                  <option value={100}>100 pages</option>
+                  <option value={200}>200 pages</option>
+                  <option value="custom">Custom (1-500)...</option>
+                </select>
+                {isCustomLimit && (
+                  <input
+                    type="number"
+                    min={1}
+                    max={500}
+                    value={customLimitInput}
+                    onChange={(e) => handleCustomLimitChange(e.target.value)}
+                    placeholder="1-500"
+                    disabled={Boolean(activeJobId && !isJobTerminal)}
+                    className="w-20 text-xs font-semibold py-2.5 px-2 rounded-xl border border-slate-200 bg-white focus:outline-hidden focus:ring-2 focus:ring-blue-500/20"
+                  />
+                )}
+              </div>
+              {limitError && (
+                <p className="text-[11px] text-rose-500 mt-1 font-medium">{limitError}</p>
+              )}
             </div>
             <div className="sm:col-span-2">
               <Button
@@ -655,38 +709,46 @@ export const WebsiteIntelligence: React.FC = () => {
           </div>
 
           {/* Metrics Grid */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-3 text-center">
+          <div className="grid grid-cols-2 sm:grid-cols-5 lg:grid-cols-10 gap-2.5 text-center">
+            <div className="p-2.5 rounded-xl bg-blue-50/60 border border-blue-100">
+              <span className="text-[10px] uppercase font-bold text-blue-600 block">Target Limit</span>
+              <span className="text-sm font-bold text-blue-700">{job.max_pages ?? 50}</span>
+            </div>
             <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-100">
               <span className="text-[10px] uppercase font-bold text-slate-400 block">Discovered</span>
-              <span className="text-sm font-bold text-slate-900">{job.pages_discovered}</span>
+              <span className="text-sm font-bold text-slate-900">{job.pages_discovered ?? 0}</span>
             </div>
             <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-100">
               <span className="text-[10px] uppercase font-bold text-slate-400 block">Attempted</span>
-              <span className="text-sm font-bold text-slate-900">{job.pages_attempted}</span>
+              <span className="text-sm font-bold text-slate-900">{job.pages_attempted ?? 0}</span>
             </div>
             <div className="p-2.5 rounded-xl bg-emerald-50/60 border border-emerald-100">
               <span className="text-[10px] uppercase font-bold text-emerald-600 block">Crawled</span>
-              <span className="text-sm font-bold text-emerald-700">{job.pages_crawled}</span>
+              <span className="text-sm font-bold text-emerald-700">{job.pages_crawled ?? 0}</span>
+            </div>
+            <div className="p-2.5 rounded-xl bg-amber-50/60 border border-amber-100">
+              <span className="text-[10px] uppercase font-bold text-amber-600 block">Skipped</span>
+              <span className="text-sm font-bold text-amber-700">{job.pages_skipped ?? 0}</span>
             </div>
             <div className="p-2.5 rounded-xl bg-rose-50/60 border border-rose-100">
               <span className="text-[10px] uppercase font-bold text-rose-600 block">Failed</span>
-              <span className="text-sm font-bold text-rose-700">{job.pages_failed}</span>
+              <span className="text-sm font-bold text-rose-700">{job.pages_failed ?? 0}</span>
+            </div>
+            <div className="p-2.5 rounded-xl bg-indigo-50/60 border border-indigo-100">
+              <span className="text-[10px] uppercase font-bold text-indigo-600 block">Analysed</span>
+              <span className="text-sm font-bold text-indigo-700">{job.pages_analysed ?? job.pages_crawled ?? 0}</span>
             </div>
             <div className="p-2.5 rounded-xl bg-indigo-50/60 border border-indigo-100">
               <span className="text-[10px] uppercase font-bold text-indigo-600 block">References</span>
-              <span className="text-sm font-bold text-indigo-700">{job.references_found}</span>
-            </div>
-            <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-100">
-              <span className="text-[10px] uppercase font-bold text-slate-400 block">Contacts</span>
-              <span className="text-sm font-bold text-slate-900">{job.contacts_created}</span>
+              <span className="text-sm font-bold text-indigo-700">{job.references_found ?? 0}</span>
             </div>
             <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-100">
               <span className="text-[10px] uppercase font-bold text-slate-400 block">Companies</span>
-              <span className="text-sm font-bold text-slate-900">{job.companies_created}</span>
+              <span className="text-sm font-bold text-slate-900">{job.companies_created ?? 0}</span>
             </div>
             <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-100">
               <span className="text-[10px] uppercase font-bold text-slate-400 block">Leads</span>
-              <span className="text-sm font-bold text-slate-900">{job.leads_created}</span>
+              <span className="text-sm font-bold text-slate-900">{job.leads_created ?? 0}</span>
             </div>
           </div>
 

@@ -78,7 +78,7 @@ export const ProviderDetail: React.FC = () => {
     if (!id) return;
     setIsResearching(true);
     try {
-      await startProviderResearch(id);
+      await startProviderResearch(id, 50);
       toast.success('Research job dispatched to background crawler');
       await fetchData();
     } catch (err: any) {
