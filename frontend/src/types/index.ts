@@ -63,6 +63,16 @@ export interface Company {
   enrichment_status?: string;
   last_enriched_at?: string;
   verification_status: string;
+  provider_id?: string;
+  primary_provider_name?: string;
+  primary_provider_website?: string;
+  source_url?: string;
+  source_providers?: Array<{
+    provider_id: string;
+    provider_name: string;
+    provider_website?: string;
+    source_url?: string;
+  }>;
   created_at: string;
   updated_at?: string;
 }
@@ -137,6 +147,16 @@ export interface Contact {
   is_suppressed: boolean;
   do_not_contact: boolean;
   source_references?: string[];
+  provider_id?: string;
+  primary_provider_name?: string;
+  primary_provider_website?: string;
+  source_url?: string;
+  source_providers?: Array<{
+    provider_id: string;
+    provider_name: string;
+    provider_website?: string;
+    source_url?: string;
+  }>;
   created_at: string;
   updated_at?: string;
 }

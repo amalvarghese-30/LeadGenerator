@@ -232,6 +232,7 @@ async def list_contacts(
     is_suppressed: Optional[bool] = None,
     verification_status: Optional[str] = None,
     enrichment_status: Optional[str] = None,
+    provider_id: Optional[str] = None,
 ) -> Tuple[List[Dict], int]:
     query: Dict[str, Any] = {}
     if search:
@@ -244,6 +245,34 @@ async def list_contacts(
         ]
     if company_id:
         query["company_id"] = company_id
+    if provider_id:
+        prov_companies = await db.companies.find(
+            {"$or": [{"provider_ids": provider_id}, {"source_providers.provider_id": provider_id}]},
+            {"_id": 1}
+        ).to_list(1000)
+        prov_comp_ids = [str(co["_id"]) for co in prov_companies]
+
+        prov_refs = await db.provider_client_references.find(
+            {"provider_id": {"$in": [provider_id, ObjectId(provider_id) if ObjectId.is_valid(provider_id) else None]}},
+            {"company_id": 1, "company_name": 1}
+        ).to_list(1000)
+        prov_comp_names = []
+        for r in prov_refs:
+            if r.get("company_id") and str(r["company_id"]) not in prov_comp_ids:
+                prov_comp_ids.append(str(r["company_id"]))
+            if r.get("company_name"):
+                prov_comp_names.append(r["company_name"])
+
+        query["$and"] = query.get("$and", [])
+        query["$and"].append({
+            "$or": [
+                {"provider_ids": provider_id},
+                {"provider_id": provider_id},
+                {"source_providers.provider_id": provider_id},
+                {"company_id": {"$in": prov_comp_ids}},
+                {"company_name": {"$in": prov_comp_names}},
+            ]
+        })
     if is_suppressed is not None:
         if is_suppressed is False:
             query["is_suppressed"] = {"$ne": True}
@@ -294,6 +323,35 @@ async def list_contacts(
                     "twitter": None,
                     "youtube": None,
                 }
+
+        # Populate provider attribution if not present
+        if not c.get("primary_provider_name"):
+            if comp and comp.get("primary_provider_name"):
+                c["primary_provider_name"] = comp["primary_provider_name"]
+                c["primary_provider_website"] = comp.get("primary_provider_website")
+                c["source_providers"] = comp.get("source_providers") or []
+                c["source_url"] = comp.get("source_url")
+            else:
+                ref_q = []
+                if comp_id:
+                    ref_q.append({"company_id": comp_id})
+                if c.get("company_name"):
+                    ref_q.append({"company_name": c["company_name"]})
+                ref = await db.provider_client_references.find_one({"$or": ref_q}) if ref_q else None
+                if ref and ref.get("provider_id"):
+                    pid = str(ref["provider_id"])
+                    c["provider_id"] = pid
+                    c["source_url"] = ref.get("source_url")
+                    prov = await db.providers.find_one({"_id": ObjectId(pid)}) if ObjectId.is_valid(pid) else None
+                    if prov:
+                        c["primary_provider_name"] = prov.get("name")
+                        c["primary_provider_website"] = prov.get("website")
+                        c["source_providers"] = [{
+                            "provider_id": pid,
+                            "provider_name": prov.get("name"),
+                            "provider_website": prov.get("website"),
+                            "source_url": ref.get("source_url")
+                        }]
 
     return contact_list, total
 

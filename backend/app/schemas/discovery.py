@@ -41,3 +41,10 @@ class ResearchRequest(BaseModel):
     provider_id: str
     force_recrawl: bool = False
     crawl_depth: int = 2
+
+
+class BatchResearchRequest(BaseModel):
+    urls: List[str]
+    names: Optional[List[str]] = None
+    page_limit: Optional[int] = 50
+    job_type: Optional[str] = "full_research"

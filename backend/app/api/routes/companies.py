@@ -22,11 +22,12 @@ async def list_companies_route(
     search: Optional[str] = None,
     industry: Optional[str] = None,
     country: Optional[str] = None,
+    provider_id: Optional[str] = None,
     db: AsyncIOMotorDatabase = Depends(get_db),
     _user: dict = Depends(get_current_user),
 ):
     skip, limit = build_skip_limit(page, page_size)
-    items, total = await list_companies(db, skip, limit, search, industry, country)
+    items, total = await list_companies(db, skip, limit, search, industry, country, provider_id)
     return paginate([_fmt(i) for i in items], total, page, limit)
 
 @router.post("", response_model=CompanyResponse, status_code=status.HTTP_201_CREATED)

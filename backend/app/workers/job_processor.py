@@ -142,6 +142,10 @@ class JobProcessor:
 
         logger.info("[JOB] Processing %s | type=%s | provider=%s | url=%s", job_id, job_type, provider_id, start_url)
 
+        provider = await db.providers.find_one({"_id": ObjectId(provider_id)}) if provider_id and ObjectId.is_valid(provider_id) else None
+        provider_name = (provider.get("name") if provider else None) or job.get("provider_name") or "Competitor"
+        provider_website = (provider.get("website") if provider else None) or start_url
+
         if not start_url:
             await self._fail(db, job_id, _err("startup", "missing starting_url", err_type="config"))
             return
@@ -502,10 +506,29 @@ class JobProcessor:
                         comp = await company_service.create(comp_data)
                         company_id = comp.get("id")
 
-                        if company_id and comp_website:
+                        if company_id:
+                            prov_entry = {
+                                "provider_id": str(provider_id),
+                                "provider_name": provider_name,
+                                "provider_website": provider_website,
+                                "source_url": ref.get("source_url") or start_url,
+                            }
+                            upd_fields = {
+                                "primary_provider_name": provider_name,
+                                "primary_provider_website": provider_website,
+                                "source_url": ref.get("source_url") or start_url,
+                            }
+                            if comp_website:
+                                upd_fields["website"] = comp_website
                             await db.companies.update_one(
                                 {"_id": ObjectId(company_id)},
-                                {"$set": {"website": comp_website}}
+                                {
+                                    "$set": upd_fields,
+                                    "$addToSet": {
+                                        "provider_ids": str(provider_id),
+                                        "source_providers": prov_entry,
+                                    }
+                                }
                             )
 
                         if company_id and company_id not in discovered_company_ids:
@@ -569,6 +592,16 @@ class JobProcessor:
                             "company_name": comp_name,
                             "contact_verification_status": "discovered",
                             "source_references": [ref_id] if ref_id else [],
+                            "provider_ids": [str(provider_id)] if provider_id else [],
+                            "primary_provider_name": provider_name,
+                            "primary_provider_website": provider_website,
+                            "source_url": ref.get("source_url") or start_url,
+                            "source_providers": [{
+                                "provider_id": str(provider_id),
+                                "provider_name": provider_name,
+                                "provider_website": provider_website,
+                                "source_url": ref.get("source_url") or start_url,
+                            }] if provider_id else [],
                         })
 
                         contact_id = contact.get("id")

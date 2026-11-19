@@ -195,6 +195,7 @@ async def list_companies(
     search: Optional[str] = None,
     industry: Optional[str] = None,
     country: Optional[str] = None,
+    provider_id: Optional[str] = None,
 ) -> Tuple[List[Dict], int]:
     query: Dict[str, Any] = {}
     if search:
@@ -203,11 +204,56 @@ async def list_companies(
         query["industry"] = industry
     if country:
         query["country"] = country
+    if provider_id:
+        prov_refs = await db.provider_client_references.find(
+            {"provider_id": {"$in": [provider_id, ObjectId(provider_id) if ObjectId.is_valid(provider_id) else None]}},
+            {"company_id": 1, "company_name": 1}
+        ).to_list(1000)
+        ref_comp_ids = [ObjectId(r["company_id"]) for r in prov_refs if r.get("company_id") and ObjectId.is_valid(str(r["company_id"]))]
+        ref_comp_names = [r["company_name"] for r in prov_refs if r.get("company_name")]
+
+        query["$and"] = query.get("$and", [])
+        query["$and"].append({
+            "$or": [
+                {"provider_ids": provider_id},
+                {"source_providers.provider_id": provider_id},
+                {"_id": {"$in": ref_comp_ids}},
+                {"name": {"$in": ref_comp_names}},
+            ]
+        })
 
     total = await db.companies.count_documents(query)
     cursor = db.companies.find(query).sort("created_at", -1).skip(skip).limit(limit)
     docs = await cursor.to_list(length=limit)
-    return [_doc_to_dict(d) for d in docs], total
+    comp_list = [_doc_to_dict(d) for d in docs]
+
+    # Populate provider attribution if not present
+    for co in comp_list:
+        if not co.get("primary_provider_name"):
+            cid = co.get("id")
+            cname = co.get("name")
+            ref_q = []
+            if cid:
+                ref_q.append({"company_id": cid})
+            if cname:
+                ref_q.append({"company_name": cname})
+            ref = await db.provider_client_references.find_one({"$or": ref_q}) if ref_q else None
+            if ref and ref.get("provider_id"):
+                pid = str(ref["provider_id"])
+                co["provider_id"] = pid
+                co["source_url"] = ref.get("source_url")
+                prov = await db.providers.find_one({"_id": ObjectId(pid)}) if ObjectId.is_valid(pid) else None
+                if prov:
+                    co["primary_provider_name"] = prov.get("name")
+                    co["primary_provider_website"] = prov.get("website")
+                    co["source_providers"] = [{
+                        "provider_id": pid,
+                        "provider_name": prov.get("name"),
+                        "provider_website": prov.get("website"),
+                        "source_url": ref.get("source_url")
+                    }]
+
+    return comp_list, total
 
 
 async def update_company(db: AsyncIOMotorDatabase, company_id: str, data: Dict) -> Optional[Dict]:

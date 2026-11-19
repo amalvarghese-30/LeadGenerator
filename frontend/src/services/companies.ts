@@ -7,6 +7,7 @@ export const getCompanies = async (params: {
   search?: string;
   industry?: string;
   country?: string;
+  provider_id?: string;
 }): Promise<PaginatedResponse<Company>> => {
   const res = await api.get<PaginatedResponse<Company>>('/companies', { params });
   return res.data;

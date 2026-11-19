@@ -86,6 +86,11 @@ class ContactResponse(BaseModel):
     last_enriched_at: Optional[Any] = None
     enrichment_attempts: int = 0
     enrichment_errors: List[str] = []
+    provider_id: Optional[str] = None
+    primary_provider_name: Optional[str] = None
+    primary_provider_website: Optional[str] = None
+    source_url: Optional[str] = None
+    source_providers: List[Dict[str, Any]] = []
     is_suppressed: bool = False
     do_not_contact: bool = False
     tags: List[str] = []
@@ -93,4 +98,4 @@ class ContactResponse(BaseModel):
     created_at: str
     updated_at: str
 
-    model_config = {"from_attributes": True}
+    model_config = {"from_attributes": True, "extra": "allow"}

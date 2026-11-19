@@ -26,6 +26,9 @@ import {
   Search,
   ChevronDown,
   ChevronUp,
+  Layers,
+  ListOrdered,
+  Play,
 } from 'lucide-react';
 import { Card } from '../../components/ui/Card';
 import { Button } from '../../components/ui/Button';
@@ -51,12 +54,22 @@ import {
   getJobResults,
   getJobEventsStreamUrl,
   ScanResultItem,
+  startBatchResearch,
+  getBatchQueue,
+  BatchQueueItem,
 } from '../../services/discovery';
 import { CrawlJob, JobEvent } from '../../types';
 
 export const Scanner: React.FC = () => {
   // Input bar state
+  const [scanMode, setScanMode] = useState<'single' | 'bulk'>('single');
   const [targetUrl, setTargetUrl] = useState('https://theperson.in/');
+  const [bulkInputText, setBulkInputText] = useState('');
+  const [batchQueue, setBatchQueue] = useState<BatchQueueItem[]>([]);
+  const [isBatchLoading, setIsBatchLoading] = useState(false);
+  const [isBatchSubmitting, setIsBatchSubmitting] = useState(false);
+  const [batchFeedback, setBatchFeedback] = useState<string | null>(null);
+
   const [pageLimit, setPageLimit] = useState(50);
   const [isCustomLimit, setIsCustomLimit] = useState(false);
   const [customLimitInput, setCustomLimitInput] = useState('');
@@ -64,6 +77,109 @@ export const Scanner: React.FC = () => {
   const [isDeepScan, setIsDeepScan] = useState(false);
   const [isStarting, setIsStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const RESEARCH_53_PRESET = `https://www.digitalzene.com/
+https://personeur.com/
+https://ra-aha.com/
+https://bhaviksarkhedi.com/
+https://ohhmybrand.com/
+https://ashrafmalik.com/entity/startuply/
+https://www.repulex.com/
+https://brandyourself.com/
+https://boldface.online/
+https://www.thepeoplecompany.me/
+https://fablesquare.com/
+https://www.scribblersindia.com/
+https://www.theinfluenceforge.com/
+https://i-midastouch.com/
+https://www.morismedia.in/
+https://www.brainboxcatalysts.com/
+https://www.harshitadagha.in/
+https://digihandler.com/
+https://raddigital.in/
+https://postlitmedia.com/
+https://thewiseidiot.in/
+https://gliped.com/
+https://bharatcxo.in/
+https://cxodrive.com/
+https://personalbrandingempire.com/
+https://lexiconn.in/
+https://roihunt.in/
+https://shakecontent.com/
+https://nprdesign.com/
+https://digitaltheory.co.in/
+https://www.adfactorspr.com/
+https://www.edelman.com/
+https://www.genesis-bcw.com/
+https://www.repindia.com/
+https://conceptpr.com/
+https://avianwe.com/
+https://www.watconsult.com/
+https://www.techmagnate.com/
+https://the-practice.net/
+https://fnfmedia.in/
+https://www.schbang.com/
+https://yourstory.com/
+https://www.entrepreneur.com/en-in
+https://www.forbesindia.com/
+https://thebetterindia.com/
+https://startuptalky.com/
+https://inc42.com/
+https://www.joinef.com/
+https://foundertube.com/
+https://wikitia.com/
+https://www.crunchbase.com/
+https://tracxn.com/
+https://www.linkedin.com/`;
+
+  const fetchBatchQueue = async () => {
+    setIsBatchLoading(true);
+    try {
+      const res = await getBatchQueue(100);
+      setBatchQueue(res.queue || []);
+    } catch (e) {
+      console.error('Failed to fetch batch queue', e);
+    } finally {
+      setIsBatchLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchBatchQueue();
+    const interval = setInterval(fetchBatchQueue, 6000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const handleStartBatchScan = async () => {
+    const rawLines = bulkInputText
+      .split('\n')
+      .map((l) => l.trim())
+      .filter((l) => l.length > 0 && !l.startsWith('#'));
+
+    if (rawLines.length === 0) {
+      setError('Please enter or paste at least one valid competitor URL.');
+      return;
+    }
+
+    setIsBatchSubmitting(true);
+    setError(null);
+    setBatchFeedback(null);
+
+    try {
+      const res = await startBatchResearch({
+        urls: rawLines,
+        page_limit: pageLimit,
+        job_type: 'full_research',
+      });
+      setBatchFeedback(`Successfully queued ${res.queued_jobs} competitor scans! (${res.already_active} were already active/pending)`);
+      setBulkInputText('');
+      await fetchBatchQueue();
+    } catch (err: any) {
+      setError(err?.response?.data?.detail || 'Failed to start batch scan');
+    } finally {
+      setIsBatchSubmitting(false);
+    }
+  };
 
   const handleCustomLimitChange = (val: string) => {
     setCustomLimitInput(val);
@@ -621,110 +737,309 @@ export const Scanner: React.FC = () => {
           </p>
         </div>
 
-        <form onSubmit={handleStartScan} className="space-y-4">
-          <div className="flex flex-col sm:flex-row gap-3">
-            <div className="relative flex-1">
-              <Radar className="absolute left-3.5 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
-              <input
-                type="text"
-                value={targetUrl}
-                onChange={(e) => setTargetUrl(e.target.value)}
-                placeholder="https://competitor-agency.com"
-                disabled={isStarting}
-                className="w-full bg-slate-950 border border-slate-700 focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 rounded-xl pl-11 pr-4 py-3.5 text-sm text-white placeholder-slate-500 font-mono transition-all"
+        {/* SCAN MODE TOGGLE */}
+        <div className="flex items-center gap-2 mb-5 border-b border-slate-800 pb-3">
+          <button
+            type="button"
+            onClick={() => setScanMode('single')}
+            className={`px-3.5 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all ${
+              scanMode === 'single'
+                ? 'bg-cyan-500 text-slate-950 shadow-md shadow-cyan-500/20'
+                : 'bg-slate-950 text-slate-400 hover:text-white border border-slate-800'
+            }`}
+          >
+            <Radar className="w-3.5 h-3.5" />
+            <span>Single Competitor Scan</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              setScanMode('bulk');
+              fetchBatchQueue();
+            }}
+            className={`px-3.5 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all ${
+              scanMode === 'bulk'
+                ? 'bg-cyan-500 text-slate-950 shadow-md shadow-cyan-500/20'
+                : 'bg-slate-950 text-slate-400 hover:text-white border border-slate-800'
+            }`}
+          >
+            <Layers className="w-3.5 h-3.5" />
+            <span>⚡ Bulk Competitor Queue ({batchQueue.filter((q) => q.status === 'pending' || q.status === 'running').length} in Queue)</span>
+          </button>
+        </div>
+
+        {scanMode === 'single' ? (
+          <form onSubmit={handleStartScan} className="space-y-4">
+            <div className="flex flex-col sm:flex-row gap-3">
+              <div className="relative flex-1">
+                <Radar className="absolute left-3.5 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
+                <input
+                  type="text"
+                  value={targetUrl}
+                  onChange={(e) => setTargetUrl(e.target.value)}
+                  placeholder="https://competitor-agency.com"
+                  disabled={isStarting}
+                  className="w-full bg-slate-950 border border-slate-700 focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 rounded-xl pl-11 pr-4 py-3.5 text-sm text-white placeholder-slate-500 font-mono transition-all"
+                />
+              </div>
+
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+                <div
+                  className="flex items-center gap-1.5 bg-slate-950 border border-slate-700 rounded-xl px-3 py-2"
+                  title="Maximum number of eligible pages the crawler will process (1 - 500)."
+                >
+                  <span className="text-[11px] font-semibold text-slate-400 pl-1 hidden md:inline">Limit:</span>
+                  <select
+                    value={isCustomLimit ? 'custom' : pageLimit}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      if (val === 'custom') {
+                        setIsCustomLimit(true);
+                        setCustomLimitInput(String(pageLimit));
+                      } else {
+                        setIsCustomLimit(false);
+                        setPageLimit(Number(val));
+                        setLimitError(null);
+                      }
+                    }}
+                    disabled={isStarting}
+                    className="bg-transparent text-slate-200 text-xs font-semibold focus:outline-none cursor-pointer py-1 pr-1"
+                  >
+                    <option value={15} className="bg-slate-900 text-slate-200">15 Pages</option>
+                    <option value={30} className="bg-slate-900 text-slate-200">30 Pages</option>
+                    <option value={50} className="bg-slate-900 text-slate-200">50 Pages (Default)</option>
+                    <option value={100} className="bg-slate-900 text-slate-200">100 Pages</option>
+                    <option value={200} className="bg-slate-900 text-slate-200">200 Pages</option>
+                    <option value="custom" className="bg-slate-900 text-slate-200">Custom (1-500)...</option>
+                  </select>
+
+                  {isCustomLimit && (
+                    <div className="flex items-center gap-1 border-l border-slate-700 pl-2">
+                      <input
+                        type="number"
+                        min={1}
+                        max={500}
+                        value={customLimitInput}
+                        onChange={(e) => handleCustomLimitChange(e.target.value)}
+                        placeholder="1-500"
+                        disabled={isStarting}
+                        className="w-16 bg-slate-900 border border-slate-600 focus:border-cyan-500 rounded px-2 py-1 text-xs text-white font-mono outline-none"
+                      />
+                      <span className="text-[11px] text-slate-400">pg</span>
+                    </div>
+                  )}
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={isStarting || Boolean(limitError)}
+                  className="bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold px-6 py-3.5 rounded-xl text-sm transition-all shadow-lg shadow-cyan-500/20 flex items-center justify-center gap-2 shrink-0 cursor-pointer disabled:opacity-50"
+                >
+                  {isStarting ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      <span>Initiating...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Sparkles className="w-4 h-4" />
+                      <span>Scan Competitor</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+
+            {/* Scan Options Bar */}
+            <div className="flex flex-wrap items-center justify-between gap-4 pt-1 text-xs text-slate-400">
+              <label className="flex items-center gap-2 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={isDeepScan}
+                  onChange={(e) => setIsDeepScan(e.target.checked)}
+                  className="rounded border-slate-700 text-cyan-500 focus:ring-cyan-500 bg-slate-950"
+                />
+                <span className="text-slate-300 font-medium">
+                  Deep Stealth Mode (Headless browser rendering for SPAs & Cloudflare bypass)
+                </span>
+              </label>
+
+              <div className="flex items-center gap-4 text-[11px] font-mono text-slate-400">
+                <span>Adaptive Jitter: 0.5s - 2.5s</span>
+                <span>•</span>
+                <span>Strict Relationship Attribution</span>
+                <span>•</span>
+                <span>Zero Mock Leaks</span>
+              </div>
+            </div>
+          </form>
+        ) : (
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-semibold text-slate-300 flex items-center gap-2">
+                  <ListOrdered className="w-3.5 h-3.5 text-cyan-400" />
+                  <span>Competitor URLs (One per line)</span>
+                </label>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setBulkInputText(RESEARCH_53_PRESET)}
+                    className="text-[11px] font-mono text-cyan-400 hover:text-cyan-300 bg-cyan-950/60 border border-cyan-800 px-2.5 py-0.5 rounded-lg transition-colors cursor-pointer"
+                  >
+                    Load Research List (53 Entries)
+                  </button>
+                  <span className="text-[11px] font-mono text-slate-400">
+                    {bulkInputText.split('\n').filter((l) => l.trim().length > 0).length} URLs
+                  </span>
+                </div>
+              </div>
+
+              <textarea
+                value={bulkInputText}
+                onChange={(e) => setBulkInputText(e.target.value)}
+                placeholder="https://competitor-one.com&#10;https://competitor-two.com&#10;https://competitor-three.com"
+                rows={5}
+                disabled={isBatchSubmitting}
+                className="w-full bg-slate-950 border border-slate-700 focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 rounded-xl p-3.5 text-xs text-white placeholder-slate-500 font-mono transition-all outline-none"
               />
             </div>
 
-            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
-              <div
-                className="flex items-center gap-1.5 bg-slate-950 border border-slate-700 rounded-xl px-3 py-2"
-                title="Maximum number of eligible pages the crawler will process (1 - 500)."
-              >
-                <span className="text-[11px] font-semibold text-slate-400 pl-1 hidden md:inline">Limit:</span>
-                <select
-                  value={isCustomLimit ? 'custom' : pageLimit}
-                  onChange={(e) => {
-                    const val = e.target.value;
-                    if (val === 'custom') {
-                      setIsCustomLimit(true);
-                      setCustomLimitInput(String(pageLimit));
-                    } else {
-                      setIsCustomLimit(false);
-                      setPageLimit(Number(val));
-                      setLimitError(null);
-                    }
-                  }}
-                  disabled={isStarting}
-                  className="bg-transparent text-slate-200 text-xs font-semibold focus:outline-none cursor-pointer py-1 pr-1"
-                >
-                  <option value={15} className="bg-slate-900 text-slate-200">15 Pages</option>
-                  <option value={30} className="bg-slate-900 text-slate-200">30 Pages</option>
-                  <option value={50} className="bg-slate-900 text-slate-200">50 Pages (Default)</option>
-                  <option value={100} className="bg-slate-900 text-slate-200">100 Pages</option>
-                  <option value={200} className="bg-slate-900 text-slate-200">200 Pages</option>
-                  <option value="custom" className="bg-slate-900 text-slate-200">Custom (1-500)...</option>
-                </select>
-
-                {isCustomLimit && (
-                  <div className="flex items-center gap-1 border-l border-slate-700 pl-2">
-                    <input
-                      type="number"
-                      min={1}
-                      max={500}
-                      value={customLimitInput}
-                      onChange={(e) => handleCustomLimitChange(e.target.value)}
-                      placeholder="1-500"
-                      disabled={isStarting}
-                      className="w-16 bg-slate-900 border border-slate-600 focus:border-cyan-500 rounded px-2 py-1 text-xs text-white font-mono outline-none"
-                    />
-                    <span className="text-[11px] text-slate-400">pg</span>
-                  </div>
-                )}
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 pt-1">
+              <div className="flex items-center gap-2">
+                <div className="flex items-center gap-1.5 bg-slate-950 border border-slate-700 rounded-xl px-3 py-2">
+                  <span className="text-[11px] font-semibold text-slate-400 pl-1">Per Competitor Limit:</span>
+                  <select
+                    value={pageLimit}
+                    onChange={(e) => setPageLimit(Number(e.target.value))}
+                    className="bg-transparent text-slate-200 text-xs font-semibold focus:outline-none cursor-pointer py-1"
+                  >
+                    <option value={15} className="bg-slate-900 text-slate-200">15 Pages</option>
+                    <option value={30} className="bg-slate-900 text-slate-200">30 Pages</option>
+                    <option value={50} className="bg-slate-900 text-slate-200">50 Pages (Recommended)</option>
+                    <option value={100} className="bg-slate-900 text-slate-200">100 Pages</option>
+                  </select>
+                </div>
               </div>
 
               <button
-                type="submit"
-                disabled={isStarting || Boolean(limitError)}
-                className="bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold px-6 py-3.5 rounded-xl text-sm transition-all shadow-lg shadow-cyan-500/20 flex items-center justify-center gap-2 shrink-0 cursor-pointer disabled:opacity-50"
+                type="button"
+                onClick={handleStartBatchScan}
+                disabled={isBatchSubmitting || bulkInputText.trim().length === 0}
+                className="bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold px-6 py-3 rounded-xl text-xs sm:text-sm transition-all shadow-lg shadow-cyan-500/20 flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
               >
-                {isStarting ? (
+                {isBatchSubmitting ? (
                   <>
                     <Loader2 className="w-4 h-4 animate-spin" />
-                    <span>Initiating...</span>
+                    <span>Enqueuing Targets...</span>
                   </>
                 ) : (
                   <>
-                    <Sparkles className="w-4 h-4" />
-                    <span>Scan Competitor</span>
+                    <Play className="w-4 h-4 fill-slate-950" />
+                    <span>Queue & Start Sequential Scanning</span>
                   </>
                 )}
               </button>
             </div>
+
+            {batchFeedback && (
+              <div className="p-3 bg-cyan-950/60 border border-cyan-800 rounded-xl flex items-center gap-2.5 text-cyan-200 text-xs">
+                <CheckCircle2 className="w-4 h-4 text-cyan-400 shrink-0" />
+                <span>{batchFeedback}</span>
+              </div>
+            )}
           </div>
+        )}
 
-          {/* Scan Options Bar */}
-          <div className="flex flex-wrap items-center justify-between gap-4 pt-1 text-xs text-slate-400">
-            <label className="flex items-center gap-2 cursor-pointer select-none">
-              <input
-                type="checkbox"
-                checked={isDeepScan}
-                onChange={(e) => setIsDeepScan(e.target.checked)}
-                className="rounded border-slate-700 text-cyan-500 focus:ring-cyan-500 bg-slate-950"
-              />
-              <span className="text-slate-300 font-medium">
-                Deep Stealth Mode (Headless browser rendering for SPAs & Cloudflare bypass)
-              </span>
-            </label>
+        {/* BATCH QUEUE DASHBOARD (when in bulk mode) */}
+        {scanMode === 'bulk' && (
+          <div className="mt-6 pt-6 border-t border-slate-800 space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Layers className="w-4 h-4 text-cyan-400" />
+                <h3 className="text-sm font-bold text-white">Live Competitor Crawl Queue</h3>
+                <span className="text-[11px] font-mono text-slate-400">({batchQueue.length} total jobs)</span>
+              </div>
+              <button
+                type="button"
+                onClick={fetchBatchQueue}
+                className="text-slate-400 hover:text-white text-xs font-mono flex items-center gap-1 cursor-pointer"
+              >
+                <RotateCcw className={`w-3 h-3 ${isBatchLoading ? 'animate-spin' : ''}`} />
+                <span>Refresh</span>
+              </button>
+            </div>
 
-            <div className="flex items-center gap-4 text-[11px] font-mono text-slate-400">
-              <span>Adaptive Jitter: 0.5s - 2.5s</span>
-              <span>•</span>
-              <span>Strict Relationship Attribution</span>
-              <span>•</span>
-              <span>Zero Mock Leaks</span>
+            <div className="bg-slate-950 border border-slate-800 rounded-xl overflow-hidden max-h-80 overflow-y-auto">
+              <table className="w-full text-left text-xs border-collapse">
+                <thead>
+                  <tr className="border-b border-slate-800 text-slate-400 font-mono text-[10px] uppercase bg-slate-900/60">
+                    <th className="py-2.5 px-3">Competitor / Target URL</th>
+                    <th className="py-2.5 px-3">Status</th>
+                    <th className="py-2.5 px-3">Pages</th>
+                    <th className="py-2.5 px-3">Clients Found</th>
+                    <th className="py-2.5 px-3 text-right">Action</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-800/40 font-mono">
+                  {batchQueue.length === 0 ? (
+                    <tr>
+                      <td colSpan={5} className="py-8 text-center text-slate-500 font-sans">
+                        No batch jobs queued yet. Paste URLs above and click "Queue & Start Sequential Scanning".
+                      </td>
+                    </tr>
+                  ) : (
+                    batchQueue.map((item) => (
+                      <tr
+                        key={item.id}
+                        className={`hover:bg-slate-900/40 transition-colors ${activeJobId === item.id ? 'bg-cyan-950/20' : ''}`}
+                      >
+                        <td className="py-2 px-3">
+                          <div className="font-sans font-bold text-slate-200">{item.provider_name}</div>
+                          <div className="text-[10px] text-slate-500 truncate max-w-[200px]">{item.starting_url}</div>
+                        </td>
+                        <td className="py-2 px-3">
+                          <span
+                            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${
+                              item.status === 'completed'
+                                ? 'bg-emerald-950 text-emerald-400 border border-emerald-800'
+                                : item.status === 'running'
+                                ? 'bg-cyan-950 text-cyan-400 border border-cyan-800 animate-pulse'
+                                : item.status === 'failed'
+                                ? 'bg-red-950 text-red-400 border border-red-800'
+                                : 'bg-slate-800 text-slate-400'
+                            }`}
+                          >
+                            {item.status}
+                          </span>
+                        </td>
+                        <td className="py-2 px-3 text-slate-300">
+                          {item.pages_crawled} / {item.max_pages}
+                        </td>
+                        <td className="py-2 px-3 text-emerald-400 font-bold">
+                          {item.references_found} clients
+                        </td>
+                        <td className="py-2 px-3 text-right font-sans">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setActiveJobId(item.id);
+                              setIsTerminalExpanded(true);
+                            }}
+                            className="px-2.5 py-1 rounded bg-slate-900 hover:bg-cyan-950 border border-slate-700 hover:border-cyan-700 text-cyan-400 text-xs font-semibold transition-colors cursor-pointer"
+                          >
+                            View Results
+                          </button>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
             </div>
           </div>
-        </form>
+        )}
 
         {error && (
           <div className="mt-4 p-3.5 bg-red-950/60 border border-red-800 rounded-xl flex items-center gap-3 text-red-200 text-xs">

@@ -19,7 +19,8 @@ import {
   Sliders,
 } from 'lucide-react';
 import { getContacts, enrichContact, suppressContact, deleteContact } from '../../services/contacts';
-import { Contact, ContactChannel } from '../../types';
+import { getProviders } from '../../services/providers';
+import { Contact, ContactChannel, Provider } from '../../types';
 import {
   LinkedinIcon,
   InstagramIcon,
@@ -39,6 +40,8 @@ export const Directory: React.FC = () => {
 
   // Search & Filters
   const [searchQuery, setSearchQuery] = useState('');
+  const [providers, setProviders] = useState<Provider[]>([]);
+  const [selectedProviderId, setSelectedProviderId] = useState<string>('');
   const [filterHasEmail, setFilterHasEmail] = useState(false);
   const [filterHasPhone, setFilterHasPhone] = useState(false);
   const [filterHasLinkedIn, setFilterHasLinkedIn] = useState(false);
@@ -56,6 +59,7 @@ export const Directory: React.FC = () => {
         page,
         page_size: 50,
         search: searchQuery || undefined,
+        provider_id: selectedProviderId || undefined,
         is_suppressed: false,
       });
       setContacts(res.items);
@@ -70,7 +74,19 @@ export const Directory: React.FC = () => {
 
   useEffect(() => {
     fetchContactsList();
-  }, [page, searchQuery]);
+  }, [page, searchQuery, selectedProviderId]);
+
+  useEffect(() => {
+    const loadProviders = async () => {
+      try {
+        const pRes = await getProviders({ page_size: 100 });
+        setProviders(pRes.items || []);
+      } catch (e) {
+        // ignore
+      }
+    };
+    loadProviders();
+  }, []);
 
   const handleCopy = async (text: string, fieldId: string) => {
     if (!text) return;
@@ -118,6 +134,8 @@ export const Directory: React.FC = () => {
       'Email',
       'Phone',
       'LinkedIn',
+      'Discovered Via (Competitor)',
+      'Competitor URL',
       'Verification Status',
       'Enrichment Status',
       'Created At',
@@ -129,6 +147,8 @@ export const Directory: React.FC = () => {
       `"${(c.email || '').replace(/"/g, '""')}"`,
       `"${(c.phone || '').replace(/"/g, '""')}"`,
       `"${(c.linkedin_url || c.professional_urls?.linkedin || '').replace(/"/g, '""')}"`,
+      `"${(c.primary_provider_name || '').replace(/"/g, '""')}"`,
+      `"${(c.primary_provider_website || c.source_url || '').replace(/"/g, '""')}"`,
       `"${c.contact_verification_status || 'discovered'}"`,
       `"${c.enrichment_status || 'pending'}"`,
       `"${c.created_at || ''}"`,
@@ -197,8 +217,29 @@ export const Directory: React.FC = () => {
             />
           </div>
 
-          {/* Quick Filter Toggles */}
+          {/* Quick Filter Toggles & Provider Selector */}
           <div className="flex flex-wrap items-center gap-2 text-xs">
+            {/* Competitor / Provider Filter Dropdown */}
+            <div className="flex items-center gap-1.5 bg-slate-950 border border-slate-700 rounded-xl px-2.5 py-1">
+              <Building2 className="w-3.5 h-3.5 text-cyan-400" />
+              <span className="text-[11px] font-semibold text-slate-400 hidden sm:inline">Competitor:</span>
+              <select
+                value={selectedProviderId}
+                onChange={(e) => {
+                  setSelectedProviderId(e.target.value);
+                  setPage(1);
+                }}
+                className="bg-transparent text-slate-200 text-xs font-semibold focus:outline-none cursor-pointer py-1 max-w-[160px] truncate"
+              >
+                <option value="" className="bg-slate-900 text-slate-200">All Competitor Sources</option>
+                {providers.map((p) => (
+                  <option key={p.id} value={p.id} className="bg-slate-900 text-slate-200">
+                    {p.name || p.domain || 'Competitor'}
+                  </option>
+                ))}
+              </select>
+            </div>
+
             <button
               onClick={() => setFilterHasEmail(!filterHasEmail)}
               className={`px-3 py-1.5 rounded-lg border font-medium flex items-center gap-1.5 transition-colors ${
@@ -259,6 +300,7 @@ export const Directory: React.FC = () => {
                 <tr className="border-b border-slate-800 text-slate-400 font-mono text-[11px] uppercase bg-slate-950/80">
                   <th className="py-3 px-4">Contact & Title</th>
                   <th className="py-3 px-4">Company</th>
+                  <th className="py-3 px-4">Discovered Via</th>
                   <th className="py-3 px-4">Corporate Email</th>
                   <th className="py-3 px-4">Phone / WhatsApp</th>
                   <th className="py-3 px-4">Social & LinkedIn</th>
@@ -302,6 +344,32 @@ export const Directory: React.FC = () => {
                       <span className="text-[10px] font-mono text-slate-400 uppercase block mt-0.5">
                         {contact.contact_verification_status || 'discovered'}
                       </span>
+                    </td>
+
+                    {/* Discovered Via Competitor */}
+                    <td className="py-3.5 px-4" onClick={(e) => e.stopPropagation()}>
+                      {contact.primary_provider_name ? (
+                        <div>
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-cyan-950/80 border border-cyan-800 text-cyan-300 text-[11px] font-medium">
+                            <Building2 className="w-2.5 h-2.5 text-cyan-400" />
+                            {contact.primary_provider_name}
+                          </span>
+                          {(contact.primary_provider_website || contact.source_url) && (
+                            <a
+                              href={contact.primary_provider_website || contact.source_url}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="text-slate-400 hover:text-cyan-400 flex items-center gap-1 text-[10px] mt-1 hover:underline truncate max-w-[130px]"
+                              title={contact.primary_provider_website || contact.source_url}
+                            >
+                              <span>{(contact.primary_provider_website || contact.source_url)?.replace(/^https?:\/\//, '').split('/')[0]}</span>
+                              <ExternalLink className="w-2.5 h-2.5 shrink-0" />
+                            </a>
+                          )}
+                        </div>
+                      ) : (
+                        <span className="text-slate-500 text-xs">—</span>
+                      )}
                     </td>
 
                     {/* Email */}
@@ -501,6 +569,41 @@ export const Directory: React.FC = () => {
                 <span className="text-sm font-semibold text-white">
                   {selectedContact.company_name || 'Individual Profile'}
                 </span>
+              </div>
+
+              {/* Competitor / Source Attribution Card */}
+              <div className="p-3.5 rounded-xl bg-slate-950 border border-cyan-900/50 space-y-2">
+                <div className="flex items-center gap-1.5 text-cyan-400 font-semibold text-xs">
+                  <Building2 className="w-3.5 h-3.5" />
+                  <span>Competitor Source & Origin</span>
+                </div>
+                <div className="space-y-1.5 text-xs">
+                  <div className="flex items-center justify-between">
+                    <span className="text-slate-400">Discovered On Competitor:</span>
+                    <span className="font-bold text-white">
+                      {selectedContact.primary_provider_name || 'Direct / Scan'}
+                    </span>
+                  </div>
+                  {(selectedContact.primary_provider_website || selectedContact.source_url) && (
+                    <div className="flex items-center justify-between gap-2 pt-1.5 border-t border-slate-900">
+                      <span className="text-slate-400">Scanned URL:</span>
+                      <a
+                        href={selectedContact.primary_provider_website || selectedContact.source_url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-cyan-400 hover:underline flex items-center gap-1 truncate max-w-[210px]"
+                      >
+                        <span className="truncate">{selectedContact.primary_provider_website || selectedContact.source_url}</span>
+                        <ExternalLink className="w-3 h-3 shrink-0" />
+                      </a>
+                    </div>
+                  )}
+                  {selectedContact.source_providers && selectedContact.source_providers.length > 0 && (
+                    <div className="pt-1 text-[11px] text-slate-500">
+                      Cited across {selectedContact.source_providers.length} provider portfolio reference(s).
+                    </div>
+                  )}
+                </div>
               </div>
 
               <div>

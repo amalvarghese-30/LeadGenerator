@@ -9,11 +9,12 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
+from urllib.parse import urlparse
 from app.config import settings
 from app.auth.dependencies import get_db, get_current_user
 from app.discovery.ddgs_search import DDGSSearch
 from app.discovery.google_dorking import GoogleDorkingHelper
-from app.schemas.discovery import SearchRequest
+from app.schemas.discovery import SearchRequest, BatchResearchRequest
 from app.schemas.common import PaginatedResponse, paginate, build_skip_limit
 from app.utils.job_logger import log_job_event, stream_manager
 
@@ -128,6 +129,170 @@ async def research_provider_route(
     )
 
     return _fmt_job(job_doc)
+
+
+@router.post("/batch-research")
+async def batch_research_route(
+    payload: BatchResearchRequest,
+    db: AsyncIOMotorDatabase = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    if not payload.urls:
+        raise HTTPException(400, "No URLs provided")
+
+    queued = []
+    active_list = []
+    safety_max = getattr(settings, "CRAWLER_SAFETY_MAX_PAGES", 500)
+    default_max = getattr(settings, "CRAWLER_MAX_PAGES_PER_JOB", 50)
+    eff_max_pages = min(payload.page_limit or default_max, safety_max)
+    now = datetime.now(timezone.utc)
+
+    for i, raw_url in enumerate(payload.urls):
+        raw_url = raw_url.strip()
+        if not raw_url:
+            continue
+        if not raw_url.startswith("http://") and not raw_url.startswith("https://"):
+            clean_url = f"https://{raw_url}"
+        else:
+            clean_url = raw_url
+
+        try:
+            parsed = urlparse(clean_url)
+            hostname = (parsed.hostname or "").replace("www.", "").lower()
+            if not hostname:
+                continue
+        except Exception:
+            continue
+
+        prov_name = None
+        if payload.names and i < len(payload.names) and payload.names[i]:
+            prov_name = payload.names[i].strip()
+        if not prov_name:
+            domain_part = hostname.split(".")[0]
+            prov_name = domain_part.replace("-", " ").replace("_", " ").title()
+
+        provider = await db.providers.find_one({
+            "$or": [{"domain": hostname}, {"website": clean_url}]
+        })
+        if not provider:
+            prov_doc = {
+                "name": prov_name,
+                "website": clean_url,
+                "domain": hostname,
+                "category": "direct_competitor",
+                "discovery_status": "researching",
+                "created_by": str(user.get("_id", "")),
+                "created_at": now,
+                "updated_at": now,
+            }
+            res = await db.providers.insert_one(prov_doc)
+            prov_id = str(res.inserted_id)
+        else:
+            prov_id = str(provider["_id"])
+            if not provider.get("name") or provider.get("name") == "Unknown":
+                await db.providers.update_one({"_id": provider["_id"]}, {"$set": {"name": prov_name}})
+
+        active = await db.crawl_jobs.find_one({
+            "provider_id": prov_id,
+            "status": {"$in": ["pending", "running"]},
+        })
+        if active:
+            active_list.append({"provider_id": prov_id, "job_id": str(active["_id"]), "status": active.get("status")})
+            continue
+
+        eff_job_type = payload.job_type or "full_research"
+        path_l = clean_url.lower()
+        if any(seg in path_l for seg in ["/wiki/", "/person/", "/profile/", "/people/", "/author/", "/leadership/", "/executive/"]):
+            eff_job_type = "person_profile"
+
+        job_doc = {
+            "provider_id": prov_id,
+            "provider_name": prov_name,
+            "starting_url": clean_url,
+            "job_type": eff_job_type,
+            "max_pages": eff_max_pages,
+            "status": "pending",
+            "current_stage": "queued",
+            "progress_pct": 0,
+            "pages_discovered": 0,
+            "pages_attempted": 0,
+            "pages_crawled": 0,
+            "pages_failed": 0,
+            "pages_skipped": 0,
+            "pages_analysed": 0,
+            "references_found": 0,
+            "contacts_created": 0,
+            "companies_created": 0,
+            "leads_created": 0,
+            "errors": [],
+            "warnings": [],
+            "created_by": str(user.get("_id", "")),
+            "created_at": now,
+            "updated_at": now,
+        }
+        res_job = await db.crawl_jobs.insert_one(job_doc)
+        job_id_str = str(res_job.inserted_id)
+        job_doc["_id"] = res_job.inserted_id
+
+        await db.providers.update_one(
+            {"_id": ObjectId(prov_id)},
+            {"$set": {"discovery_status": "researching", "crawl_job_id": job_id_str}},
+        )
+
+        await log_job_event(
+            db, job_id_str, "queued", "info", "job_created",
+            f"Batch research job queued for {prov_name} ({clean_url})"
+        )
+
+        queued.append({
+            "provider_id": prov_id,
+            "provider_name": prov_name,
+            "job_id": job_id_str,
+            "starting_url": clean_url,
+            "status": "pending",
+        })
+
+    return {
+        "total_submitted": len(payload.urls),
+        "queued_jobs": len(queued),
+        "already_active": len(active_list),
+        "jobs": queued,
+    }
+
+
+@router.get("/batch-queue")
+async def get_batch_queue_route(
+    limit: int = Query(100, ge=1, le=500),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+    _user: dict = Depends(get_current_user),
+):
+    jobs_cursor = db.crawl_jobs.find({}).sort("created_at", -1).limit(limit)
+    jobs = await jobs_cursor.to_list(limit)
+    res = []
+    for j in jobs:
+        pid = j.get("provider_id")
+        prov = None
+        if pid and ObjectId.is_valid(pid):
+            prov = await db.providers.find_one({"_id": ObjectId(pid)})
+        pname = (prov.get("name") if prov else None) or j.get("provider_name") or "Unknown Competitor"
+        purl = (prov.get("website") if prov else None) or j.get("starting_url")
+        res.append({
+            "id": str(j["_id"]),
+            "provider_id": pid,
+            "provider_name": pname,
+            "starting_url": purl,
+            "status": j.get("status", "pending"),
+            "current_stage": j.get("current_stage", "queued"),
+            "progress_pct": j.get("progress_pct", 0),
+            "pages_crawled": j.get("pages_crawled", 0),
+            "max_pages": j.get("max_pages", 50),
+            "references_found": j.get("references_found", 0),
+            "contacts_created": j.get("contacts_created", 0),
+            "companies_created": j.get("companies_created", 0),
+            "created_at": j.get("created_at").isoformat() if hasattr(j.get("created_at"), "isoformat") else str(j.get("created_at")),
+            "completed_at": j.get("completed_at").isoformat() if hasattr(j.get("completed_at"), "isoformat") else (str(j.get("completed_at")) if j.get("completed_at") else None),
+        })
+    return {"queue": res}
 
 
 @router.get("/jobs", response_model=PaginatedResponse)

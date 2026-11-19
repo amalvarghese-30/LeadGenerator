@@ -52,6 +52,7 @@ async def list_contacts_route(
     page_size: int = Query(20, ge=1, le=200),
     search: Optional[str] = None,
     company_id: Optional[str] = None,
+    provider_id: Optional[str] = None,
     verification_status: Optional[str] = None,
     enrichment_status: Optional[str] = None,
     is_suppressed: Optional[bool] = None,
@@ -60,7 +61,7 @@ async def list_contacts_route(
 ):
     skip, limit = build_skip_limit(page, page_size)
     items, total = await list_contacts(
-        db, skip, limit, search, company_id, is_suppressed, verification_status, enrichment_status
+        db, skip, limit, search, company_id, is_suppressed, verification_status, enrichment_status, provider_id
     )
     return paginate([_fmt(i) for i in items], total, page, limit)
 

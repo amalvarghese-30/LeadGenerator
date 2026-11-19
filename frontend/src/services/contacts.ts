@@ -6,6 +6,7 @@ export const getContacts = async (params: {
   page_size?: number;
   search?: string;
   company_id?: string;
+  provider_id?: string;
   verification_status?: string;
   enrichment_status?: string;
   is_suppressed?: boolean;

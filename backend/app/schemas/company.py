@@ -73,7 +73,12 @@ class CompanyResponse(BaseModel):
     verification_status: str
     tags: List[str] = []
     notes: Optional[str] = None
+    provider_id: Optional[str] = None
+    primary_provider_name: Optional[str] = None
+    primary_provider_website: Optional[str] = None
+    source_url: Optional[str] = None
+    source_providers: List[Dict[str, Any]] = []
     created_at: str
     updated_at: str
 
-    model_config = {"from_attributes": True}
+    model_config = {"from_attributes": True, "extra": "allow"}

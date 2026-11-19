@@ -115,3 +115,50 @@ export const getDorkingQueries = async (domain: string, brand_name?: string) => 
   const res = await api.get('/discovery/dorking', { params: { domain, brand_name } });
   return res.data;
 };
+
+export interface BatchResearchRequest {
+  urls: string[];
+  names?: string[];
+  page_limit?: number;
+  job_type?: string;
+}
+
+export interface BatchResearchResponse {
+  total_submitted: number;
+  queued_jobs: number;
+  already_active: number;
+  jobs: Array<{
+    provider_id: string;
+    provider_name: string;
+    job_id: string;
+    starting_url: string;
+    status: string;
+  }>;
+}
+
+export interface BatchQueueItem {
+  id: string;
+  provider_id?: string;
+  provider_name?: string;
+  starting_url?: string;
+  status: string;
+  current_stage: string;
+  progress_pct: number;
+  pages_crawled: number;
+  max_pages: number;
+  references_found: number;
+  contacts_created: number;
+  companies_created: number;
+  created_at: string;
+  completed_at?: string;
+}
+
+export const startBatchResearch = async (data: BatchResearchRequest): Promise<BatchResearchResponse> => {
+  const res = await api.post<BatchResearchResponse>('/discovery/batch-research', data);
+  return res.data;
+};
+
+export const getBatchQueue = async (limit: number = 100): Promise<{ queue: BatchQueueItem[] }> => {
+  const res = await api.get<{ queue: BatchQueueItem[] }>('/discovery/batch-queue', { params: { limit } });
+  return res.data;
+};
