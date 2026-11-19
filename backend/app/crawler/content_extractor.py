@@ -179,66 +179,45 @@ class ContentExtractor:
             except Exception:
                 pass
 
-        # 4. Social profiles
+        # 4. Social profiles directly from full HTML (including header and footer icons)
         social_profiles = self.social_discovery.discover_from_html(html, url)
 
-        # 5. Mailto & Tel DOM links
-        mailto_emails: List[str] = []
-        tel_phones: List[str] = []
-        for a in soup.find_all("a", href=True):
-            href = a["href"].strip()
-            if href.lower().startswith("mailto:"):
-                clean_email = href[7:].split("?")[0].strip()
-                clean_email = unquote(clean_email)
-                if clean_email and "@" in clean_email:
-                    mailto_emails.append(clean_email)
-            elif href.lower().startswith("tel:"):
-                clean_phone = href[4:].split("?")[0].strip()
-                clean_phone = unquote(clean_phone)
-                if clean_phone:
-                    tel_phones.append(clean_phone)
+        # 5. Extract emails & phones directly from full raw HTML (including header, nav, footer, mailto:, tel:)
+        from app.enrichment.public_email_extractor import PublicEmailExtractor
+        from app.enrichment.public_phone_extractor import PublicPhoneExtractor
 
-        # 6. Publicly published business emails
-        raw_text_emails = EMAIL_REGEX.findall(capped_text)
-        obfuscated_emails = []
-        for m in OBFUSCATED_EMAIL_REGEX.finditer(capped_text):
-            obfuscated_emails.append(f"{m.group(1)}@{m.group(2)}.{m.group(3)}".lower().strip())
-        all_candidate_emails = list(set(raw_text_emails + obfuscated_emails + mailto_emails + schema_emails))
-        valid_emails = []
-        for e in all_candidate_emails:
-            e_clean = e.strip().rstrip(".,;:)")
-            if not e_clean or "@" not in e_clean:
-                continue
-            if e_clean.lower().endswith((".png", ".jpg", ".jpeg", ".webp", ".svg", ".gif", ".pdf", ".css", ".js")):
-                continue
-            valid_emails.append(e_clean)
-        valid_emails = list(dict.fromkeys(valid_emails))
+        extracted_emails = PublicEmailExtractor.extract_from_html(html, url)
+        valid_emails = [e.value for e in extracted_emails]
 
-        # 7. Publicly published business phones (phonenumbers parsing + tel links)
-        raw_text_phone_candidates = PHONE_REGEX.findall(capped_text)
-        all_candidate_phones = list(set(tel_phones + schema_phones + raw_text_phone_candidates))
-        valid_phones = []
+        extracted_phones = PublicPhoneExtractor.extract_from_html(html, url)
+        valid_phones = [p.value for p in extracted_phones]
 
-        for p_raw in all_candidate_phones:
-            p_clean = p_raw.strip().strip(".,;:()")
-            if len(re.sub(r'\D', '', p_clean)) < 7:
+        # 6. Additional fallback checks from schema (normalized via phonenumbers)
+        for sem in schema_emails:
+            sem_clean = sem.strip().lower()
+            if sem_clean and "@" in sem_clean and sem_clean not in valid_emails:
+                valid_emails.append(sem_clean)
+
+        for sph in schema_phones:
+            sph_clean = sph.strip().strip(".,;:()")
+            if not sph_clean or len(re.sub(r'\D', '', sph_clean)) < 7:
                 continue
             try:
-                parsed = phonenumbers.parse(p_clean, "IN")
+                parsed = phonenumbers.parse(sph_clean, "IN")
                 if phonenumbers.is_possible_number(parsed) and phonenumbers.is_valid_number(parsed):
                     formatted = phonenumbers.format_number(parsed, phonenumbers.PhoneNumberFormat.E164)
-                    valid_phones.append(formatted)
+                    if formatted not in valid_phones:
+                        valid_phones.append(formatted)
                 elif phonenumbers.is_possible_number(parsed):
-                    # Valid length and national format
                     formatted = phonenumbers.format_number(parsed, phonenumbers.PhoneNumberFormat.INTERNATIONAL)
-                    valid_phones.append(formatted)
+                    if formatted not in valid_phones:
+                        valid_phones.append(formatted)
             except Exception:
-                # If phonenumbers cannot parse it but it came from a tel: link or schema, retain clean digits
-                if p_raw in tel_phones or p_raw in schema_phones:
-                    clean_digits = re.sub(r'[^\d+]', '', p_clean)
-                    if len(clean_digits) >= 8:
-                        valid_phones.append(clean_digits)
+                clean_digits = re.sub(r'[^\d+]', '', sph_clean)
+                if len(clean_digits) >= 8 and clean_digits not in valid_phones:
+                    valid_phones.append(clean_digits)
 
+        valid_emails = list(dict.fromkeys(valid_emails))
         valid_phones = list(dict.fromkeys(valid_phones))
 
         # 8. Contact forms

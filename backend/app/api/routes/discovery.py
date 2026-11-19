@@ -321,7 +321,16 @@ async def get_job_results(
         raise HTTPException(404, "Job not found")
 
     provider_id = job.get("provider_id")
-    refs_cursor = db.provider_client_references.find({"provider_id": provider_id}).sort("confidence", -1).limit(100)
+    match_conditions = []
+    if job_id:
+        match_conditions.append({"job_id": job_id})
+    if provider_id:
+        match_conditions.append({"provider_id": str(provider_id)})
+        if ObjectId.is_valid(str(provider_id)):
+            match_conditions.append({"provider_id": ObjectId(str(provider_id))})
+
+    query = {"$or": match_conditions} if match_conditions else {}
+    refs_cursor = db.provider_client_references.find(query).sort("confidence", -1).limit(100)
     references = await refs_cursor.to_list(100)
 
     results = []
@@ -371,11 +380,82 @@ async def get_job_results(
                 if isinstance(cc, dict) and cc.get("value") not in existing_c_vals:
                     all_channels.append(cc)
 
+        # Collect emails list
+        emails_list = []
+        if company and company.get("emails"):
+            emails_list.extend(company["emails"])
+        elif comp_pub_contact.get("emails"):
+            emails_list.extend(comp_pub_contact["emails"])
+        for c in all_channels:
+            if isinstance(c, dict) and c.get("type") == "email" and c.get("value"):
+                emails_list.append(c["value"])
+        if best_email and best_email not in emails_list:
+            emails_list.insert(0, best_email)
+        emails_list = list(dict.fromkeys(emails_list))
+
+        # Collect phones list
+        phones_list = []
+        if company and company.get("phones"):
+            phones_list.extend(company["phones"])
+        elif comp_pub_contact.get("phones"):
+            phones_list.extend(comp_pub_contact["phones"])
+        for c in all_channels:
+            if isinstance(c, dict) and c.get("type") == "phone" and c.get("value"):
+                phones_list.append(c["value"])
+        if best_phone and best_phone not in phones_list:
+            phones_list.insert(0, best_phone)
+        phones_list = list(dict.fromkeys(phones_list))
+
+        # Collect socials dict
+        socials_dict = {
+            "linkedin": None,
+            "instagram": None,
+            "facebook": None,
+            "twitter": None,
+            "youtube": None,
+        }
+        if company and isinstance(company.get("socials"), dict):
+            for k in socials_dict.keys():
+                if company["socials"].get(k):
+                    socials_dict[k] = company["socials"][k]
+        elif comp_pub_contact.get("socials") and isinstance(comp_pub_contact["socials"], dict):
+            for k in socials_dict.keys():
+                if comp_pub_contact["socials"].get(k):
+                    socials_dict[k] = comp_pub_contact["socials"][k]
+
+        if best_linkedin and not socials_dict["linkedin"]:
+            socials_dict["linkedin"] = best_linkedin
+
+        for sp in comp_socials:
+            if isinstance(sp, dict):
+                plat = (sp.get("platform") or "").lower()
+                if plat in socials_dict and not socials_dict[plat] and sp.get("url"):
+                    socials_dict[plat] = sp["url"]
+        for c in all_channels:
+            if isinstance(c, dict) and c.get("type") == "social" and c.get("value"):
+                s_val = c["value"].lower()
+                for plat in socials_dict.keys():
+                    if plat in s_val and not socials_dict[plat]:
+                        socials_dict[plat] = c["value"]
+
+        website_val = (
+            (company.get("website") if company else None)
+            or ref.get("company_website")
+            or ref.get("client_website")
+            or ref.get("verified_website")
+            or ref.get("client_url")
+            or ref.get("website")
+        )
+
         results.append({
             "id": ref_id,
             "company_id": str(company["_id"]) if company else company_id,
             "company_name": comp_name or (company.get("name") if company else None),
-            "company_website": (company.get("website") if company else None) or ref.get("company_website") or ref.get("client_website"),
+            "company_website": website_val,
+            "website": website_val,
+            "emails": emails_list,
+            "phones": phones_list,
+            "socials": socials_dict,
             "industry": ref.get("industry") or (company.get("industry") if company else None),
             "person_name": person_name or (contact.get("full_name") if contact else None),
             "designation": ref.get("designation") or (contact.get("designation") if contact else None),
@@ -387,7 +467,10 @@ async def get_job_results(
             "enrichment_status": company.get("enrichment_status", "pending") if company else "pending",
             "contacts": {
                 "email": best_email,
+                "emails": emails_list,
                 "phone": best_phone,
+                "phones": phones_list,
+                "socials": socials_dict,
                 "linkedin": best_linkedin,
                 "channels": all_channels,
                 "social_profiles": comp_socials,

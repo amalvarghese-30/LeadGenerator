@@ -121,6 +121,25 @@ class PortfolioExtractor:
                 seen_keys.add(dedup_key)
                 candidates.append(cs)
 
+        # 4. Quaternary Strategy: Generic card containers with heading + external CTA link (e.g. "Visit Site →")
+        if len(candidates) < 2:
+            cta_words = ["visit site", "live site", "view website", "view project", "launch", "live demo", "website", "visit"]
+            for a in soup.find_all("a", href=True):
+                a_text = (a.get_text(strip=True) + " " + a.get("title", "") + " " + a.get("aria-label", "")).lower()
+                href = a["href"].strip()
+                if not href or href.startswith(("#", "javascript:", "mailto:", "tel:")):
+                    continue
+                is_cta = any(w in a_text for w in cta_words) or a.get("target") == "_blank"
+                if is_cta:
+                    parent_card = a.find_parent(["article", "li", "div"])
+                    if parent_card and isinstance(parent_card, Tag):
+                        cand = self._parse_card(parent_card, page_url, prov_dom, provider_brand)
+                        if cand:
+                            dedup_key = f"{cand['candidate_name'].lower()}::{cand.get('client_website_url') or ''}"
+                            if dedup_key not in seen_keys:
+                                seen_keys.add(dedup_key)
+                                candidates.append(cand)
+
         logger.info("[PORTFOLIO_DOM] Extracted %d portfolio candidates from %s", len(candidates), page_url)
         return candidates
 
@@ -134,12 +153,23 @@ class PortfolioExtractor:
         """Parse an individual DOM card into structured portfolio candidate."""
         # A. Find candidate name
         card_heading = None
-        for tag_name in ["h2", "h3", "h4", "h5", "h6", "strong", "b"]:
-            h = card.find(tag_name)
-            if h and h.get_text(strip=True):
+        for tag_name in ["h1", "h2", "h3", "h4", "h5", "h6"]:
+            for h in card.find_all(tag_name):
                 text_clean = h.get_text(strip=True)
                 if len(text_clean) >= 2 and text_clean.lower() not in GENERIC_ACTION_LABELS:
                     card_heading = text_clean
+                    break
+            if card_heading:
+                break
+
+        if not card_heading:
+            for tag_name in ["strong", "b"]:
+                for h in card.find_all(tag_name):
+                    text_clean = h.get_text(strip=True)
+                    if len(text_clean) >= 2 and text_clean.lower() not in GENERIC_ACTION_LABELS:
+                        card_heading = text_clean
+                        break
+                if card_heading:
                     break
 
         img_tag = card.find("img")
@@ -186,6 +216,8 @@ class PortfolioExtractor:
         if parent_a:
             links.insert(0, parent_a)
 
+        # Prioritize links with generic CTA text (e.g. "Visit Site", "Live Site") or target="_blank"
+        candidate_external_links = []
         for a in links:
             href = a.get("href", "").strip()
             if not href or href.startswith(("#", "javascript:", "mailto:", "tel:")):
@@ -202,8 +234,15 @@ class PortfolioExtractor:
             if any(clean_dest == exc or clean_dest.endswith("." + exc) for exc in EXCLUDED_OUTBOUND_DOMAINS):
                 continue
 
-            client_website_url = resolved
-            break
+            a_text = (a.get_text(strip=True) + " " + a.get("title", "") + " " + a.get("aria-label", "")).lower()
+            is_cta = any(cta in a_text for cta in ["visit site", "live site", "view website", "view site", "launch", "open site", "website", "view project", "explore", "visit", "live demo"])
+            is_blank = a.get("target") == "_blank"
+            candidate_external_links.append((is_cta or is_blank, resolved))
+
+        if candidate_external_links:
+            # Sort so CTA or target="_blank" links come first
+            candidate_external_links.sort(key=lambda x: x[0], reverse=True)
+            client_website_url = candidate_external_links[0][1]
 
         # C. Description / Industry tags
         desc_parts = []
@@ -218,15 +257,22 @@ class PortfolioExtractor:
 
         description = " - ".join(desc_parts) if desc_parts else None
 
-        # D. Preceding Section Heading
-        section_heading = self._find_nearest_section_heading(card)
+        # D. Preceding Section Heading & Section Context
+        section_heading, section_desc = self._find_section_context(card)
 
-        # E. Evidence text
-        evidence_text = f"{candidate_name}"
+        # E. Evidence text & evidence snippet
+        evidence_parts = []
+        if section_heading:
+            evidence_parts.append(f"[{section_heading}]")
+        if section_desc:
+            evidence_parts.append(section_desc)
+        evidence_parts.append(candidate_name)
         if description:
-            evidence_text += f" - {description}"
+            evidence_parts.append(description)
         if client_website_url:
-            evidence_text += f" - Official URL: {client_website_url}"
+            evidence_parts.append(f"Official URL: {client_website_url}")
+
+        evidence_text = " - ".join(evidence_parts)
 
         # F. Confidence calculation
         confidence = 0.75
@@ -245,6 +291,10 @@ class PortfolioExtractor:
             "portfolio_page_url": page_url,
             "client_website_url": client_website_url,
             "external_url": client_website_url,
+            "verified_website": client_website_url,
+            "client_url": client_website_url,
+            "company_website": client_website_url,
+            "website": client_website_url,
             "image_url": img_url,
             "image_alt": img_alt,
             "card_heading": card_heading or candidate_name,
@@ -252,8 +302,10 @@ class PortfolioExtractor:
             "industry": pill_texts[0] if pill_texts else None,
             "tags": pill_texts,
             "section_heading": section_heading,
+            "section_context": section_desc,
             "evidence_text": evidence_text,
             "evidence_quote": evidence_text,
+            "evidence_snippet": evidence_text,
             "relationship_type": "client_portfolio_reference",
             "confidence_score": confidence,
             "confidence": confidence,
@@ -300,6 +352,10 @@ class PortfolioExtractor:
             "portfolio_page_url": page_url,
             "client_website_url": client_website_url,
             "external_url": client_website_url,
+            "verified_website": client_website_url,
+            "client_url": client_website_url,
+            "company_website": client_website_url,
+            "website": client_website_url,
             "image_url": img_url,
             "image_alt": img.get("alt"),
             "card_heading": cand_name,
@@ -307,6 +363,7 @@ class PortfolioExtractor:
             "section_heading": section_heading,
             "evidence_text": f"Client logo: {cand_name} (alt: '{img.get('alt')}')",
             "evidence_quote": f"Client logo: {cand_name} (alt: '{img.get('alt')}')",
+            "evidence_snippet": f"Client logo: {cand_name} (alt: '{img.get('alt')}')",
             "relationship_type": "client_portfolio_reference",
             "confidence_score": conf,
             "confidence": conf,
@@ -355,8 +412,51 @@ class PortfolioExtractor:
         name = re.sub(r'\s*→$', '', name)
         return name.strip()
 
+    def _find_section_context(self, el: Tag) -> Tuple[Optional[str], Optional[str]]:
+        """
+        Traverse upwards to enclosing section/container to capture:
+        (section_heading, section_description)
+        e.g., ("Maintain", "Every site below is live, built in-house, and actively maintained...")
+        """
+        section_heading = None
+        section_desc = None
+
+        curr = el
+        while curr and curr.name != "body":
+            # 1. Look for previous heading and paragraph siblings
+            prev = curr.find_previous_sibling(["h1", "h2", "h3", "h4", "header"])
+            if prev and not section_heading:
+                h_text = prev.get_text(strip=True)
+                if h_text and len(h_text) < 100:
+                    section_heading = h_text
+                    next_p = prev.find_next_sibling("p")
+                    if next_p and next_p.get_text(strip=True):
+                        section_desc = next_p.get_text(strip=True)[:300]
+
+            # 2. Look inside enclosing parent section
+            if curr.name in ["section", "main"] or (curr.name == "div" and any(k in str(curr.get("class", [])).lower() for k in ["section", "portfolio", "container", "work"])):
+                if not section_heading:
+                    h = curr.find(["h1", "h2", "h3", "h4"])
+                    if h:
+                        section_heading = h.get_text(strip=True)
+                if not section_desc:
+                    p = curr.find("p")
+                    if p and p != el.find("p"):
+                        p_text = p.get_text(strip=True)
+                        if p_text and len(p_text) > 15:
+                            section_desc = p_text[:300]
+                if section_heading:
+                    break
+
+            curr = curr.parent
+
+        return section_heading, section_desc
+
     def _find_nearest_section_heading(self, el: Tag) -> Optional[str]:
         """Traverse upwards and backwards in DOM to find section heading."""
+        h, _ = self._find_section_context(el)
+        if h:
+            return h
         curr = el
         while curr:
             prev = curr.find_previous_sibling(["h1", "h2", "h3", "h4"])

@@ -17,8 +17,18 @@ export interface SearchProviderResponse {
 
 export interface ScanResultContact {
   email?: string | null;
+  emails?: string[];
   phone?: string | null;
+  phones?: string[];
   linkedin?: string | null;
+  socials?: {
+    linkedin?: string | null;
+    instagram?: string | null;
+    facebook?: string | null;
+    twitter?: string | null;
+    youtube?: string | null;
+    [key: string]: string | null | undefined;
+  };
   channels?: any[];
 }
 
@@ -26,6 +36,17 @@ export interface ScanResultItem {
   id: string;
   company_name?: string | null;
   company_website?: string | null;
+  website?: string | null;
+  emails?: string[];
+  phones?: string[];
+  socials?: {
+    linkedin?: string | null;
+    instagram?: string | null;
+    facebook?: string | null;
+    twitter?: string | null;
+    youtube?: string | null;
+    [key: string]: string | null | undefined;
+  };
   industry?: string | null;
   person_name?: string | null;
   designation?: string | null;

@@ -112,22 +112,27 @@ class ClientClassifier:
         # Convert DOM candidates into structured reference format
         dom_references: List[Dict[str, Any]] = []
         for c in dom_candidates:
+            website_url = c.get("client_website_url") or c.get("verified_website") or c.get("external_url")
             dom_references.append({
                 "company_name": c["candidate_name"],
-                "company_website": c.get("client_website_url"),
+                "company_website": website_url,
                 "client_name": c["candidate_name"],
-                "client_website": c.get("client_website_url"),
+                "client_website": website_url,
+                "verified_website": website_url,
+                "client_url": website_url,
+                "website": website_url,
                 "relationship_type": c.get("relationship_type", "client_portfolio_reference"),
                 "reference_type": c.get("relationship_type", "client_portfolio_reference"),
                 "confidence": c.get("confidence_score", 0.9),
                 "confidence_score": c.get("confidence_score", 0.9),
                 "source_url": url,
-                "evidence_quote": c.get("evidence_text") or f"Portfolio entry: {c['candidate_name']}",
-                "evidence_snippet": c.get("evidence_text") or f"Portfolio entry: {c['candidate_name']}",
+                "evidence_quote": c.get("evidence_quote") or c.get("evidence_text") or f"Portfolio entry: {c['candidate_name']}",
+                "evidence_snippet": c.get("evidence_snippet") or c.get("evidence_text") or f"Portfolio entry: {c['candidate_name']}",
                 "industry": c.get("industry"),
                 "extraction_method": c.get("extraction_method", "portfolio_dom"),
                 "image_url": c.get("image_url"),
                 "section_heading": c.get("section_heading"),
+                "section_context": c.get("section_context"),
             })
 
         # 3. Deterministic rich text extraction

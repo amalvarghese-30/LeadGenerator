@@ -10,7 +10,7 @@ import phonenumbers
 from bs4 import BeautifulSoup
 from pydantic import BaseModel
 
-PHONE_REGEX = re.compile(r'(?:\+?\d{1,3}[-.\s]?)?\(?\d{2,4}\)?[-.\s]?\d{3,4}[-.\s]?\d{3,4}\b')
+PHONE_REGEX = re.compile(r'(?:\+?91[\s.-]?)?[6-9]\d{4}[\s.-]?\d{5}\b|(?:\+?\d{1,3}[\s.-]?)?\(?\d{2,4}\)?[\s.-]?\d{3,4}[\s.-]?\d{3,4}\b')
 
 
 class ExtractedPhone(BaseModel):
@@ -60,7 +60,51 @@ class PublicPhoneExtractor:
                         confidence=0.85 if scope == "person_direct_work" else 0.7,
                     ))
 
-        # 2. Native phonenumbers libphonenumber text matching (handles international & 5+5 Indian mobile)
+        # 2. Explicit inspection of header, nav, footer, and address blocks
+        for container in soup.find_all(["header", "nav", "footer", "address"]):
+            c_name = container.name
+            c_text = container.get_text(separator=" ", strip=True)
+            # Match via libphonenumber in container
+            try:
+                for match in phonenumbers.PhoneNumberMatcher(c_text, default_region):
+                    if phonenumbers.is_valid_number(match.number):
+                        e164 = phonenumbers.format_number(match.number, phonenumbers.PhoneNumberFormat.E164)
+                        if e164 not in seen_numbers:
+                            seen_numbers.add(e164)
+                            scope = PublicPhoneExtractor.classify_scope(c_text, target_person_name)
+                            results.append(ExtractedPhone(
+                                value=e164,
+                                original_text=match.raw_string,
+                                scope=scope,
+                                source_url=source_url,
+                                source_type=f"webpage_{c_name}",
+                                evidence_quote=f"Extracted from <{c_name}>: '{match.raw_string}'",
+                                country_code=match.number.country_code,
+                                confidence=0.85 if scope == "person_direct_work" else 0.8,
+                            ))
+            except Exception:
+                pass
+            # Also regex in container
+            for raw in PHONE_REGEX.findall(c_text):
+                clean = raw.strip().strip(".,;:()")
+                if len(re.sub(r'\D', '', clean)) < 7:
+                    continue
+                parsed = PublicPhoneExtractor._parse_and_format(clean, default_region)
+                if parsed and parsed["e164"] not in seen_numbers:
+                    seen_numbers.add(parsed["e164"])
+                    scope = PublicPhoneExtractor.classify_scope(c_text, target_person_name)
+                    results.append(ExtractedPhone(
+                        value=parsed["e164"],
+                        original_text=clean,
+                        scope=scope,
+                        source_url=source_url,
+                        source_type=f"webpage_{c_name}",
+                        evidence_quote=f"Extracted from <{c_name}>: '{clean}'",
+                        country_code=parsed.get("country_code"),
+                        confidence=0.8 if scope == "person_direct_work" else 0.75,
+                    ))
+
+        # 3. Native phonenumbers libphonenumber text matching (handles international & 5+5 Indian mobile)
         text = soup.get_text(separator=" ", strip=True)
         try:
             for match in phonenumbers.PhoneNumberMatcher(text, default_region):

@@ -254,7 +254,45 @@ async def list_contacts(
     total = await db.contacts.count_documents(query)
     cursor = db.contacts.find(query).sort("created_at", -1).skip(skip).limit(limit)
     docs = await cursor.to_list(length=limit)
-    return [_doc_to_dict(d) for d in docs], total
+    contact_list = [_doc_to_dict(d) for d in docs]
+
+    # Join associated company information to ensure full contact channels are populated
+    for c in contact_list:
+        comp_id = c.get("company_id")
+        comp = None
+        if comp_id and ObjectId.is_valid(comp_id):
+            comp = await db.companies.find_one({"_id": ObjectId(comp_id)})
+        elif c.get("company_name"):
+            comp = await db.companies.find_one({"name": c["company_name"]})
+
+        if comp:
+            if not c.get("website"):
+                c["website"] = comp.get("website")
+            if not c.get("company_website"):
+                c["company_website"] = comp.get("website")
+            if not c.get("emails"):
+                c["emails"] = comp.get("emails") or ([c["email"]] if c.get("email") else [])
+            if not c.get("phones"):
+                c["phones"] = comp.get("phones") or ([c["phone"]] if c.get("phone") else [])
+            if not c.get("socials"):
+                c["socials"] = dict(comp.get("socials") or {})
+                if c.get("linkedin_url") and not c["socials"].get("linkedin"):
+                    c["socials"]["linkedin"] = c["linkedin_url"]
+        else:
+            if not c.get("emails") and c.get("email"):
+                c["emails"] = [c["email"]]
+            if not c.get("phones") and c.get("phone"):
+                c["phones"] = [c["phone"]]
+            if not c.get("socials"):
+                c["socials"] = {
+                    "linkedin": c.get("linkedin_url"),
+                    "instagram": None,
+                    "facebook": None,
+                    "twitter": None,
+                    "youtube": None,
+                }
+
+    return contact_list, total
 
 
 async def update_contact(

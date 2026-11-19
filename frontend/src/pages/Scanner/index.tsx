@@ -34,7 +34,13 @@ import { Badge } from '../../components/ui/Badge';
 import { ConfirmModal } from '../../components/ui/ConfirmModal';
 import { LoadingSpinner } from '../../components/ui/LoadingSpinner';
 import { EmptyState } from '../../components/ui/EmptyState';
-import { LinkedinIcon } from '../../components/ui/SocialIcons';
+import {
+  LinkedinIcon,
+  InstagramIcon,
+  TwitterIcon,
+  FacebookIcon,
+  YoutubeIcon,
+} from '../../components/ui/SocialIcons';
 import { createProvider, startProviderResearch } from '../../services/providers';
 import {
   getCrawlJob,
@@ -1059,15 +1065,17 @@ export const Scanner: React.FC = () => {
                       <div className="font-bold text-white text-sm">
                         {item.company_name || 'Individual / Private Client'}
                       </div>
-                      {item.company_website ? (
+                      {item.website || item.company_website ? (
                         <a
-                          href={item.company_website}
+                          href={item.website || item.company_website!}
                           target="_blank"
                           rel="noreferrer"
                           className="text-cyan-400 hover:underline flex items-center gap-1 text-[11px] mt-0.5"
                         >
-                          <span>{item.company_website.replace(/^https?:\/\//, '')}</span>
-                          <ExternalLink className="w-2.5 h-2.5" />
+                          <span className="truncate max-w-[170px]">
+                            {(item.website || item.company_website)?.replace(/^https?:\/\//, '').replace(/\/$/, '')}
+                          </span>
+                          <ExternalLink className="w-2.5 h-2.5 shrink-0" />
                         </a>
                       ) : (
                         <span className="text-slate-400 text-[11px]">Domain not published</span>
@@ -1132,47 +1140,150 @@ export const Scanner: React.FC = () => {
                     {/* Verified Channels */}
                     <td className="py-3 px-4 align-top">
                       <div className="space-y-1.5">
-                        {item.contacts?.email ? (
-                          <div className="flex items-center gap-1.5 group">
-                            <div className="flex items-center gap-1 text-emerald-400 font-mono text-[11px]">
-                              <Mail className="w-3 h-3 shrink-0" />
-                              <span className="truncate max-w-[170px]">{item.contacts.email}</span>
-                            </div>
-                            <button
-                              type="button"
-                              onClick={() => handleCopyChannel(`email-${item.id}`, item.contacts.email!)}
-                              className="text-slate-500 hover:text-slate-200 transition-colors p-0.5 rounded cursor-pointer"
-                              title="Copy email"
-                            >
-                              {copiedId === `email-${item.id}` ? (
-                                <Check className="w-3 h-3 text-emerald-400" />
-                              ) : (
-                                <Copy className="w-3 h-3" />
-                              )}
-                            </button>
-                          </div>
+                        {/* Email display with copy button and +N badge */}
+                        {item.contacts?.email || (item.emails && item.emails.length > 0) || (item.contacts?.emails && item.contacts.emails.length > 0) ? (
+                          (() => {
+                            const allEmails = item.emails || item.contacts?.emails || (item.contacts?.email ? [item.contacts.email] : []);
+                            const primaryEmail = allEmails[0] || item.contacts?.email;
+                            return (
+                              <div className="flex items-center gap-1.5 group flex-wrap">
+                                <div className="flex items-center gap-1 text-emerald-400 font-mono text-[11px]">
+                                  <Mail className="w-3 h-3 shrink-0" />
+                                  <span className="truncate max-w-[160px]">{primaryEmail}</span>
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => handleCopyChannel(`email-${item.id}`, primaryEmail!)}
+                                  className="text-slate-500 hover:text-slate-200 transition-colors p-0.5 rounded cursor-pointer"
+                                  title="Copy email"
+                                >
+                                  {copiedId === `email-${item.id}` ? (
+                                    <Check className="w-3 h-3 text-emerald-400" />
+                                  ) : (
+                                    <Copy className="w-3 h-3" />
+                                  )}
+                                </button>
+                                {allEmails.length > 1 && (
+                                  <span
+                                    className="px-1.5 py-0.2 rounded bg-emerald-950 text-emerald-400 border border-emerald-800 text-[10px] font-mono font-bold"
+                                    title={allEmails.join(', ')}
+                                  >
+                                    +{allEmails.length - 1}
+                                  </span>
+                                )}
+                              </div>
+                            );
+                          })()
                         ) : null}
 
-                        {item.contacts?.phone ? (
-                          <div className="flex items-center gap-1.5 group">
-                            <div className="flex items-center gap-1 text-slate-300 font-mono text-[11px]">
-                              <Phone className="w-3 h-3 shrink-0" />
-                              <span>{item.contacts.phone}</span>
-                            </div>
-                            <button
-                              type="button"
-                              onClick={() => handleCopyChannel(`phone-${item.id}`, item.contacts.phone!)}
-                              className="text-slate-500 hover:text-slate-200 transition-colors p-0.5 rounded cursor-pointer"
-                              title="Copy phone"
-                            >
-                              {copiedId === `phone-${item.id}` ? (
-                                <Check className="w-3 h-3 text-emerald-400" />
-                              ) : (
-                                <Copy className="w-3 h-3" />
-                              )}
-                            </button>
-                          </div>
+                        {/* Phone display with copy button and +N badge */}
+                        {item.contacts?.phone || (item.phones && item.phones.length > 0) || (item.contacts?.phones && item.contacts.phones.length > 0) ? (
+                          (() => {
+                            const allPhones = item.phones || item.contacts?.phones || (item.contacts?.phone ? [item.contacts.phone] : []);
+                            const primaryPhone = allPhones[0] || item.contacts?.phone;
+                            return (
+                              <div className="flex items-center gap-1.5 group flex-wrap">
+                                <div className="flex items-center gap-1 text-slate-300 font-mono text-[11px]">
+                                  <Phone className="w-3 h-3 shrink-0" />
+                                  <span>{primaryPhone}</span>
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => handleCopyChannel(`phone-${item.id}`, primaryPhone!)}
+                                  className="text-slate-500 hover:text-slate-200 transition-colors p-0.5 rounded cursor-pointer"
+                                  title="Copy phone"
+                                >
+                                  {copiedId === `phone-${item.id}` ? (
+                                    <Check className="w-3 h-3 text-emerald-400" />
+                                  ) : (
+                                    <Copy className="w-3 h-3" />
+                                  )}
+                                </button>
+                                {allPhones.length > 1 && (
+                                  <span
+                                    className="px-1.5 py-0.2 rounded bg-slate-800 text-slate-300 border border-slate-700 text-[10px] font-mono font-bold"
+                                    title={allPhones.join(', ')}
+                                  >
+                                    +{allPhones.length - 1}
+                                  </span>
+                                )}
+                              </div>
+                            );
+                          })()
                         ) : null}
+
+                        {/* Social Media Icon Pills */}
+                        {(() => {
+                          const soc = item.socials || item.contacts?.socials || {};
+                          const linkedinUrl = soc.linkedin || item.contacts?.linkedin;
+                          const instagramUrl = soc.instagram;
+                          const facebookUrl = soc.facebook;
+                          const twitterUrl = soc.twitter;
+                          const youtubeUrl = soc.youtube;
+                          const hasSocials = linkedinUrl || instagramUrl || facebookUrl || twitterUrl || youtubeUrl;
+
+                          if (!hasSocials) return null;
+
+                          return (
+                            <div className="flex items-center gap-1.5 flex-wrap pt-0.5">
+                              {linkedinUrl && (
+                                <a
+                                  href={linkedinUrl}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="p-1 rounded bg-slate-900 border border-slate-800 text-cyan-400 hover:text-cyan-300 hover:border-cyan-700 transition-colors"
+                                  title="LinkedIn"
+                                >
+                                  <LinkedinIcon className="w-3 h-3" />
+                                </a>
+                              )}
+                              {instagramUrl && (
+                                <a
+                                  href={instagramUrl}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="p-1 rounded bg-slate-900 border border-slate-800 text-pink-400 hover:text-pink-300 hover:border-pink-700 transition-colors"
+                                  title="Instagram"
+                                >
+                                  <InstagramIcon className="w-3 h-3" />
+                                </a>
+                              )}
+                              {facebookUrl && (
+                                <a
+                                  href={facebookUrl}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="p-1 rounded bg-slate-900 border border-slate-800 text-blue-500 hover:text-blue-400 hover:border-blue-700 transition-colors"
+                                  title="Facebook"
+                                >
+                                  <FacebookIcon className="w-3 h-3" />
+                                </a>
+                              )}
+                              {twitterUrl && (
+                                <a
+                                  href={twitterUrl}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="p-1 rounded bg-slate-900 border border-slate-800 text-sky-400 hover:text-sky-300 hover:border-sky-700 transition-colors"
+                                  title="Twitter / X"
+                                >
+                                  <TwitterIcon className="w-3 h-3" />
+                                </a>
+                              )}
+                              {youtubeUrl && (
+                                <a
+                                  href={youtubeUrl}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="p-1 rounded bg-slate-900 border border-slate-800 text-red-500 hover:text-red-400 hover:border-red-700 transition-colors"
+                                  title="YouTube"
+                                >
+                                  <YoutubeIcon className="w-3 h-3" />
+                                </a>
+                              )}
+                            </div>
+                          );
+                        })()}
 
                         {/* Contact Form Links */}
                         {item.contacts?.channels?.filter((c: any) => c.type === 'contact_form').slice(0, 1).map((cf: any, idx: number) => (
@@ -1188,19 +1299,9 @@ export const Scanner: React.FC = () => {
                           </a>
                         ))}
 
-                        {item.contacts?.linkedin ? (
-                          <a
-                            href={item.contacts.linkedin}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="flex items-center gap-1.5 text-cyan-400 hover:underline font-mono text-[11px]"
-                          >
-                            <LinkedinIcon className="w-3 h-3 shrink-0" />
-                            <span>LinkedIn Profile</span>
-                          </a>
-                        ) : null}
-
-                        {!item.contacts?.email && !item.contacts?.phone && !item.contacts?.linkedin && (!item.contacts?.channels || item.contacts.channels.length === 0) && (
+                        {!item.contacts?.email && !item.contacts?.phone && !item.contacts?.linkedin &&
+                         (!item.emails || item.emails.length === 0) && (!item.phones || item.phones.length === 0) &&
+                         (!item.contacts?.channels || item.contacts.channels.length === 0) && (
                           <span className="text-slate-500 text-[11px] italic">No direct channels published</span>
                         )}
 

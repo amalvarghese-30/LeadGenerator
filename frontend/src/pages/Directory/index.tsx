@@ -20,7 +20,13 @@ import {
 } from 'lucide-react';
 import { getContacts, enrichContact, suppressContact, deleteContact } from '../../services/contacts';
 import { Contact, ContactChannel } from '../../types';
-import { LinkedinIcon } from '../../components/ui/SocialIcons';
+import {
+  LinkedinIcon,
+  InstagramIcon,
+  TwitterIcon,
+  FacebookIcon,
+  YoutubeIcon,
+} from '../../components/ui/SocialIcons';
 import { LoadingSpinner } from '../../components/ui/LoadingSpinner';
 import { useToast } from '../../context/ToastContext';
 
@@ -279,28 +285,52 @@ export const Directory: React.FC = () => {
                       <div className="font-semibold text-slate-200">
                         {contact.company_name || 'Individual Profile'}
                       </div>
-                      <span className="text-[10px] font-mono text-slate-400 uppercase">
+                      {(contact.website || contact.company_website) && (
+                        <a
+                          href={contact.website || contact.company_website}
+                          target="_blank"
+                          rel="noreferrer"
+                          onClick={(e) => e.stopPropagation()}
+                          className="text-cyan-400 hover:underline flex items-center gap-1 text-[11px] mt-0.5"
+                        >
+                          <span className="truncate max-w-[150px]">
+                            {(contact.website || contact.company_website)?.replace(/^https?:\/\//, '').replace(/\/$/, '')}
+                          </span>
+                          <ExternalLink className="w-2.5 h-2.5 shrink-0" />
+                        </a>
+                      )}
+                      <span className="text-[10px] font-mono text-slate-400 uppercase block mt-0.5">
                         {contact.contact_verification_status || 'discovered'}
                       </span>
                     </td>
 
                     {/* Email */}
                     <td className="py-3.5 px-4">
-                      {contact.email ? (
-                        <div
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleCopy(contact.email!, `email-${contact.id}`);
-                          }}
-                          className="inline-flex items-center gap-1.5 px-2 py-1 rounded bg-slate-950 border border-slate-800 text-emerald-400 font-mono text-[11px] hover:border-emerald-600 transition-colors"
-                          title="Click to copy email"
-                        >
-                          <Mail className="w-3 h-3 shrink-0" />
-                          <span>{contact.email}</span>
-                          {copiedField === `email-${contact.id}` ? (
-                            <Check className="w-3 h-3 text-emerald-300 ml-1" />
-                          ) : (
-                            <Copy className="w-3 h-3 text-slate-400 ml-1" />
+                      {contact.email || (contact.emails && contact.emails.length > 0) ? (
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <div
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleCopy(contact.emails?.[0] || contact.email!, `email-${contact.id}`);
+                            }}
+                            className="inline-flex items-center gap-1.5 px-2 py-1 rounded bg-slate-950 border border-slate-800 text-emerald-400 font-mono text-[11px] hover:border-emerald-600 transition-colors"
+                            title="Click to copy email"
+                          >
+                            <Mail className="w-3 h-3 shrink-0" />
+                            <span className="truncate max-w-[140px]">{contact.emails?.[0] || contact.email}</span>
+                            {copiedField === `email-${contact.id}` ? (
+                              <Check className="w-3 h-3 text-emerald-300 ml-1" />
+                            ) : (
+                              <Copy className="w-3 h-3 text-slate-400 ml-1" />
+                            )}
+                          </div>
+                          {contact.emails && contact.emails.length > 1 && (
+                            <span
+                              className="px-1.5 py-0.5 rounded bg-emerald-950 text-emerald-400 border border-emerald-800 text-[10px] font-mono font-bold"
+                              title={contact.emails.join(', ')}
+                            >
+                              +{contact.emails.length - 1}
+                            </span>
                           )}
                         </div>
                       ) : (
@@ -310,21 +340,31 @@ export const Directory: React.FC = () => {
 
                     {/* Phone */}
                     <td className="py-3.5 px-4">
-                      {contact.phone ? (
-                        <div
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleCopy(contact.phone!, `phone-${contact.id}`);
-                          }}
-                          className="inline-flex items-center gap-1.5 px-2 py-1 rounded bg-slate-950 border border-slate-800 text-slate-200 font-mono text-[11px] hover:border-cyan-600 transition-colors"
-                          title="Click to copy phone"
-                        >
-                          <Phone className="w-3 h-3 shrink-0" />
-                          <span>{contact.phone}</span>
-                          {copiedField === `phone-${contact.id}` ? (
-                            <Check className="w-3 h-3 text-emerald-300 ml-1" />
-                          ) : (
-                            <Copy className="w-3 h-3 text-slate-400 ml-1" />
+                      {contact.phone || (contact.phones && contact.phones.length > 0) ? (
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <div
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleCopy(contact.phones?.[0] || contact.phone!, `phone-${contact.id}`);
+                            }}
+                            className="inline-flex items-center gap-1.5 px-2 py-1 rounded bg-slate-950 border border-slate-800 text-slate-200 font-mono text-[11px] hover:border-cyan-600 transition-colors"
+                            title="Click to copy phone"
+                          >
+                            <Phone className="w-3 h-3 shrink-0" />
+                            <span>{contact.phones?.[0] || contact.phone}</span>
+                            {copiedField === `phone-${contact.id}` ? (
+                              <Check className="w-3 h-3 text-emerald-300 ml-1" />
+                            ) : (
+                              <Copy className="w-3 h-3 text-slate-400 ml-1" />
+                            )}
+                          </div>
+                          {contact.phones && contact.phones.length > 1 && (
+                            <span
+                              className="px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700 text-[10px] font-mono font-bold"
+                              title={contact.phones.join(', ')}
+                            >
+                              +{contact.phones.length - 1}
+                            </span>
                           )}
                         </div>
                       ) : (
@@ -332,23 +372,84 @@ export const Directory: React.FC = () => {
                       )}
                     </td>
 
-                    {/* Socials / LinkedIn */}
+                    {/* Socials / LinkedIn / Channels */}
                     <td className="py-3.5 px-4">
-                      {contact.linkedin_url || contact.professional_urls?.linkedin ? (
-                        <a
-                          href={contact.linkedin_url || contact.professional_urls?.linkedin}
-                          target="_blank"
-                          rel="noreferrer"
-                          onClick={(e) => e.stopPropagation()}
-                          className="inline-flex items-center gap-1 text-cyan-400 hover:text-cyan-300 hover:underline font-mono text-[11px]"
-                        >
-                          <LinkedinIcon className="w-3.5 h-3.5" />
-                          <span>LinkedIn</span>
-                          <ExternalLink className="w-2.5 h-2.5" />
-                        </a>
-                      ) : (
-                        <span className="text-slate-400 text-[11px]">—</span>
-                      )}
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        {/* LinkedIn */}
+                        {(contact.socials?.linkedin || contact.linkedin_url || contact.professional_urls?.linkedin) && (
+                          <a
+                            href={contact.socials?.linkedin || contact.linkedin_url || contact.professional_urls?.linkedin}
+                            target="_blank"
+                            rel="noreferrer"
+                            onClick={(e) => e.stopPropagation()}
+                            className="p-1 rounded bg-slate-950 border border-slate-800 text-cyan-400 hover:text-cyan-300 hover:border-cyan-700 transition-colors"
+                            title="LinkedIn Profile"
+                          >
+                            <LinkedinIcon className="w-3.5 h-3.5" />
+                          </a>
+                        )}
+
+                        {/* Instagram */}
+                        {contact.socials?.instagram && (
+                          <a
+                            href={contact.socials.instagram}
+                            target="_blank"
+                            rel="noreferrer"
+                            onClick={(e) => e.stopPropagation()}
+                            className="p-1 rounded bg-slate-950 border border-slate-800 text-pink-400 hover:text-pink-300 hover:border-pink-700 transition-colors"
+                            title="Instagram Profile"
+                          >
+                            <InstagramIcon className="w-3.5 h-3.5" />
+                          </a>
+                        )}
+
+                        {/* Facebook */}
+                        {contact.socials?.facebook && (
+                          <a
+                            href={contact.socials.facebook}
+                            target="_blank"
+                            rel="noreferrer"
+                            onClick={(e) => e.stopPropagation()}
+                            className="p-1 rounded bg-slate-950 border border-slate-800 text-blue-500 hover:text-blue-400 hover:border-blue-700 transition-colors"
+                            title="Facebook Profile"
+                          >
+                            <FacebookIcon className="w-3.5 h-3.5" />
+                          </a>
+                        )}
+
+                        {/* Twitter/X */}
+                        {contact.socials?.twitter && (
+                          <a
+                            href={contact.socials.twitter}
+                            target="_blank"
+                            rel="noreferrer"
+                            onClick={(e) => e.stopPropagation()}
+                            className="p-1 rounded bg-slate-950 border border-slate-800 text-sky-400 hover:text-sky-300 hover:border-sky-700 transition-colors"
+                            title="Twitter / X"
+                          >
+                            <TwitterIcon className="w-3.5 h-3.5" />
+                          </a>
+                        )}
+
+                        {/* YouTube */}
+                        {contact.socials?.youtube && (
+                          <a
+                            href={contact.socials.youtube}
+                            target="_blank"
+                            rel="noreferrer"
+                            onClick={(e) => e.stopPropagation()}
+                            className="p-1 rounded bg-slate-950 border border-slate-800 text-red-500 hover:text-red-400 hover:border-red-700 transition-colors"
+                            title="YouTube Channel"
+                          >
+                            <YoutubeIcon className="w-3.5 h-3.5" />
+                          </a>
+                        )}
+
+                        {!contact.socials?.linkedin && !contact.linkedin_url && !contact.professional_urls?.linkedin &&
+                         !contact.socials?.instagram && !contact.socials?.facebook && !contact.socials?.twitter && !contact.socials?.youtube && (
+                          <span className="text-slate-400 text-[11px]">—</span>
+                        )}
+                      </div>
                     </td>
 
                     {/* Actions */}

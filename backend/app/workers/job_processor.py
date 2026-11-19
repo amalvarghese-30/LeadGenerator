@@ -483,7 +483,13 @@ class JobProcessor:
                     # A person-only reference must not create a fake company.
                     company_id = None
                     comp_name = ref.get("company_name") or ref.get("client_name")
-                    comp_website = ref.get("company_website") or ref.get("client_website")
+                    comp_website = (
+                        ref.get("company_website")
+                        or ref.get("client_website")
+                        or ref.get("verified_website")
+                        or ref.get("client_url")
+                        or ref.get("website")
+                    )
 
                     if comp_name:
                         comp_data = {
@@ -495,6 +501,12 @@ class JobProcessor:
                         }
                         comp = await company_service.create(comp_data)
                         company_id = comp.get("id")
+
+                        if company_id and comp_website:
+                            await db.companies.update_one(
+                                {"_id": ObjectId(company_id)},
+                                {"$set": {"website": comp_website}}
+                            )
 
                         if company_id and company_id not in discovered_company_ids:
                             discovered_company_ids.append(company_id)
@@ -510,6 +522,7 @@ class JobProcessor:
                     # 2. Persist the reference, including person-only evidence.
                     ref["company_id"] = company_id
                     ref["provider_id"] = provider_id
+                    ref["job_id"] = job_id
 
                     if not comp_name and not ref.get("person_name"):
                         warnings.append(_err(

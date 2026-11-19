@@ -29,6 +29,7 @@ PLATFORM_PATTERNS = {
     "youtube": [
         r"https?:\/\/(?:www\.)?youtube\.com\/@([a-zA-Z0-9_\-\.]+)",
         r"https?:\/\/(?:www\.)?youtube\.com\/(?:c\/|channel\/|user\/)([a-zA-Z0-9_\-\.]+)",
+        r"https?:\/\/(?:www\.)?youtube\.com\/([a-zA-Z0-9_\-\.]+)",
     ],
     "github": [
         r"https?:\/\/(?:www\.)?github\.com\/([a-zA-Z0-9_\-]+)",

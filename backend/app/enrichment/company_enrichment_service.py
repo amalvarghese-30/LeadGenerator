@@ -70,12 +70,25 @@ class CompanyEnrichmentService:
             return {"status": "error", "error": "Company not found", "company_id": company_id}
 
         company_name = company.get("name") or "Unknown Company"
-        company_website = company.get("website")
+        company_website = (
+            company.get("website")
+            or company.get("client_website")
+            or company.get("verified_website")
+            or company.get("client_url")
+        )
 
         # 2. Resolve website if missing or invalid
         if not company_website:
             logger.info("[COMPANY_ENRICH] Resolving website for '%s' (%s)", company_name, company_id)
-            res = await self.website_resolver.resolve_client_website(company_name)
+            # Check if company has source_references with website
+            ref_site = None
+            if company.get("source_references"):
+                first_ref_id = company["source_references"][0]
+                if ObjectId.is_valid(first_ref_id):
+                    r_doc = await db.provider_client_references.find_one({"_id": ObjectId(first_ref_id)})
+                    if r_doc:
+                        ref_site = r_doc.get("company_website") or r_doc.get("client_website") or r_doc.get("verified_website")
+            res = await self.website_resolver.resolve_client_website(company_name, portfolio_url=ref_site)
             if res.get("resolved_url"):
                 company_website = res["resolved_url"]
                 company_domain = res.get("domain") or self.normalizer.extract_domain(company_website)
@@ -101,6 +114,9 @@ class CompanyEnrichmentService:
                     "status": "no_website",
                     "company_id": company_id,
                     "company_name": company_name,
+                    "emails": [],
+                    "phones": [],
+                    "socials": {"linkedin": None, "instagram": None, "facebook": None, "twitter": None, "youtube": None},
                     "message": "No verified website available for enrichment",
                 }
 
@@ -140,6 +156,19 @@ class CompanyEnrichmentService:
         discovered_paths: List[str] = []
         if homepage_html:
             discovered_paths = ContactPageDiscovery.discover_pages_from_html(homepage_html, company_website)
+            # Also parse all nav/header/footer and body links with contact/about patterns
+            home_soup = BeautifulSoup(homepage_html, "html.parser")
+            for a in home_soup.find_all("a", href=True):
+                href = a["href"].strip()
+                if not href or href.startswith(("#", "javascript:", "mailto:", "tel:")):
+                    continue
+                a_text = a.get_text(strip=True).lower()
+                href_l = href.lower()
+                if any(k in href_l or k in a_text for k in ["contact", "contact-us", "about", "about-us", "reach-us", "get-in-touch", "enquiry"]):
+                    candidate = urljoin(company_website, href)
+                    if candidate.startswith(base_origin) or self.normalizer.extract_domain(candidate) == base_domain:
+                        if candidate not in discovered_paths and candidate not in pages_to_crawl:
+                            discovered_paths.append(candidate)
 
         # Add standard path fallbacks if not found in DOM
         standard_fallbacks = [
@@ -188,7 +217,7 @@ class CompanyEnrichmentService:
             if not html:
                 continue
 
-            soup = BeautifulSoup(html[:60000], "html.parser")
+            soup = BeautifulSoup(html, "html.parser")
 
             # A. Email extraction
             emails = PublicEmailExtractor.extract_from_html(
@@ -323,14 +352,34 @@ class CompanyEnrichmentService:
                 logger.warning("[COMPANY_ENRICH] People search fallback failed gracefully: %s", se)
 
         # 7. Persist enriched data to MongoDB
-        primary_email = next((c["value"] for c in extracted_channels if c["type"] == "email"), None)
-        primary_phone = next((c["value"] for c in extracted_channels if c["type"] == "phone"), None)
+        all_emails = list(dict.fromkeys([c["value"] for c in extracted_channels if c.get("type") == "email" and c.get("value")]))
+        all_phones = list(dict.fromkeys([c["value"] for c in extracted_channels if c.get("type") == "phone" and c.get("value")]))
+
+        all_socials: Dict[str, Optional[str]] = {
+            "linkedin": None,
+            "instagram": None,
+            "facebook": None,
+            "twitter": None,
+            "youtube": None,
+        }
+        for s in social_profiles:
+            plat = (s.get("platform") or "").lower()
+            if plat in all_socials and not all_socials[plat] and s.get("url"):
+                all_socials[plat] = s.get("url")
+
+        primary_email = all_emails[0] if all_emails else None
+        primary_phone = all_phones[0] if all_phones else None
 
         public_contact = dict(company.get("public_contact") or {})
         if primary_email and not public_contact.get("email"):
             public_contact["email"] = primary_email
         if primary_phone and not public_contact.get("phone"):
             public_contact["phone"] = primary_phone
+        public_contact["emails"] = all_emails
+        public_contact["phones"] = all_phones
+        public_contact["socials"] = all_socials
+        if all_socials.get("linkedin") and not public_contact.get("linkedin"):
+            public_contact["linkedin"] = all_socials["linkedin"]
 
         # 8. Manage Contact documents and multi-company associations for identified people
         created_contacts = []
@@ -419,6 +468,10 @@ class CompanyEnrichmentService:
         final_status = "enriched" if (extracted_channels or associated_people) else "no_contacts_found"
 
         update_doc: Dict[str, Any] = {
+            "website": company_website,
+            "emails": all_emails,
+            "phones": all_phones,
+            "socials": all_socials,
             "public_contact": public_contact,
             "public_contact_channels": extracted_channels,
             "social_profiles": social_profiles,
@@ -438,8 +491,8 @@ class CompanyEnrichmentService:
         logger.info(
             "[COMPANY_ENRICH] Completed for %s: %d channels (%d emails, %d phones, %d forms, %d socials), %d decision-makers",
             company_name, len(extracted_channels),
-            len([c for c in extracted_channels if c["type"] == "email"]),
-            len([c for c in extracted_channels if c["type"] == "phone"]),
+            len(all_emails),
+            len(all_phones),
             len(discovered_forms), len(social_profiles), len(decision_maker_candidates)
         )
 
@@ -447,11 +500,14 @@ class CompanyEnrichmentService:
             "company_id": company_id,
             "company_name": company_name,
             "website": company_website,
+            "emails": all_emails,
+            "phones": all_phones,
+            "socials": all_socials,
             "status": final_status,
             "enrichment_status": final_status,
             "pages_crawled": len(crawled_urls),
-            "business_emails": len([c for c in extracted_channels if c["type"] == "email"]),
-            "business_phones": len([c for c in extracted_channels if c["type"] == "phone"]),
+            "business_emails": len(all_emails),
+            "business_phones": len(all_phones),
             "contact_forms": len(discovered_forms),
             "social_links": len(social_profiles),
             "decision_makers_found": len(decision_maker_candidates),

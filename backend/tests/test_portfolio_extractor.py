@@ -97,3 +97,33 @@ def test_filter_false_matches():
     # Excluded platform domains should not be accepted
     assert "WordPress" not in client_names
     assert "Facebook" not in client_names
+
+def test_extract_card_with_generic_cta_and_section_context():
+    html = """
+    <html>
+      <body>
+        <section class="portfolio-section">
+          <h2>Maintain</h2>
+          <p>Every site below is live, built in-house, and actively maintained by our dedicated web team.</p>
+          <div class="projects-grid">
+            <div class="project-card">
+              <h3>Mahavir Builders</h3>
+              <p>Luxury residential and commercial developments across Gujarat and Maharashtra.</p>
+              <a href="https://mahavirbuilders.com" target="_blank">Visit Site →</a>
+            </div>
+          </div>
+        </section>
+      </body>
+    </html>
+    """
+    extractor = PortfolioExtractor()
+    cards = extractor.extract_portfolio_candidates(html, "https://akham.in/portfolio")
+    assert len(cards) >= 1
+
+    card = next(c for c in cards if c["company_name"] == "Mahavir Builders")
+    assert card["client_website_url"] == "https://mahavirbuilders.com"
+    assert card["verified_website"] == "https://mahavirbuilders.com"
+    assert card["website"] == "https://mahavirbuilders.com"
+    assert "[Maintain]" in card["evidence_snippet"]
+    assert "actively maintained" in card["evidence_snippet"]
+

@@ -103,8 +103,20 @@ export interface Contact {
   company_id?: string;
   company_name?: string;
   linkedin_url?: string;
+  website?: string;
+  company_website?: string;
   email?: string;
+  emails?: string[];
   phone?: string;
+  phones?: string[];
+  socials?: {
+    linkedin?: string | null;
+    instagram?: string | null;
+    facebook?: string | null;
+    twitter?: string | null;
+    youtube?: string | null;
+    [key: string]: string | null | undefined;
+  };
   professional_urls: Record<string, string>;
   business_contacts: Record<string, string>;
   associated_companies?: Array<{

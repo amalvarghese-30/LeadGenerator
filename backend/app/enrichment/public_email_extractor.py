@@ -14,6 +14,12 @@ OBFUSCATED_EMAIL_REGEX = re.compile(
     re.IGNORECASE
 )
 
+BLOCKED_EMAIL_DOMAINS = {
+    "sentry.io", "wixpress.com", "example.com", "test.com", "schema.org",
+    "cloudflare.com", "googleapis.com", "w3.org", "domain.com", "email.com",
+    "mycompany.com", "yourcompany.com", "placeholder.com"
+}
+
 GENERIC_LOCAL_PARTS = {
     "info", "contact", "hello", "office", "enquiry", "enquiries",
     "general", "mail", "admin", "welcome", "inbox", "team"
@@ -57,6 +63,12 @@ class PublicEmailExtractor:
         results: List[ExtractedEmail] = []
         seen_emails = set()
 
+        def _is_blocked(email_str: str) -> bool:
+            if not email_str or "@" not in email_str:
+                return True
+            domain = email_str.split("@")[-1].lower()
+            return domain in BLOCKED_EMAIL_DOMAINS or any(domain.endswith("." + bd) for bd in BLOCKED_EMAIL_DOMAINS)
+
         # 1. Mailto links
         for a in soup.find_all("a", href=True):
             href = a["href"].strip()
@@ -64,9 +76,9 @@ class PublicEmailExtractor:
                 raw_mail = unquote(href[7:].split("?")[0].strip())
                 if raw_mail and "@" in raw_mail:
                     clean_mail = raw_mail.lower().strip()
-                    if clean_mail not in seen_emails and not clean_mail.endswith((".png", ".jpg", ".webp")):
+                    if clean_mail not in seen_emails and not clean_mail.endswith((".png", ".jpg", ".webp")) and not _is_blocked(clean_mail):
                         seen_emails.add(clean_mail)
-                        quote = a.get_text(strip=True) or a.parent.get_text(strip=True)[:150]
+                        quote = a.get_text(strip=True) or (a.parent.get_text(strip=True)[:150] if a.parent else "")
                         scope = PublicEmailExtractor.classify_scope(clean_mail, target_person_name)
                         results.append(ExtractedEmail(
                             value=clean_mail,
@@ -74,15 +86,36 @@ class PublicEmailExtractor:
                             source_url=source_url,
                             source_type="mailto",
                             evidence_quote=f"Mailto anchor: '{quote}'",
-                            confidence=0.85 if scope == "person_direct_work" else 0.7,
+                            confidence=0.9 if scope == "person_direct_work" else 0.8,
                         ))
 
-        # 2. Visible text emails
+        # 2. Explicit inspection of header, nav, footer, and address blocks
+        for container in soup.find_all(["header", "nav", "footer", "address"]):
+            c_name = container.name
+            c_text = container.get_text(separator=" ", strip=True)
+            for m in EMAIL_REGEX.findall(c_text):
+                clean_mail = m.lower().strip().rstrip(".,;:)")
+                if not clean_mail or clean_mail in seen_emails or _is_blocked(clean_mail):
+                    continue
+                if clean_mail.endswith((".png", ".jpg", ".jpeg", ".webp", ".svg", ".gif", ".pdf", ".css", ".js")):
+                    continue
+                seen_emails.add(clean_mail)
+                scope = PublicEmailExtractor.classify_scope(clean_mail, target_person_name)
+                results.append(ExtractedEmail(
+                    value=clean_mail,
+                    scope=scope,
+                    source_url=source_url,
+                    source_type=f"webpage_{c_name}",
+                    evidence_quote=f"Extracted from <{c_name}>: '{clean_mail}'",
+                    confidence=0.85 if scope == "person_direct_work" else 0.8,
+                ))
+
+        # 3. Visible text emails across full page
         text = soup.get_text(separator=" ", strip=True)
         raw_matches = EMAIL_REGEX.findall(text)
         for m in raw_matches:
             clean_mail = m.lower().strip().rstrip(".,;:)")
-            if not clean_mail or clean_mail in seen_emails:
+            if not clean_mail or clean_mail in seen_emails or _is_blocked(clean_mail):
                 continue
             if clean_mail.endswith((".png", ".jpg", ".jpeg", ".webp", ".svg", ".gif", ".pdf", ".css", ".js")):
                 continue
@@ -101,13 +134,13 @@ class PublicEmailExtractor:
                 source_url=source_url,
                 source_type="webpage",
                 evidence_quote=f"...{evidence}...",
-                confidence=0.8 if scope == "person_direct_work" else 0.65,
+                confidence=0.8 if scope == "person_direct_work" else 0.7,
             ))
 
-        # 3. Obfuscated emails (e.g. user [at] example [dot] com)
+        # 4. Obfuscated emails (e.g. user [at] example [dot] com)
         for m in OBFUSCATED_EMAIL_REGEX.finditer(text):
             reconstructed = f"{m.group(1)}@{m.group(2)}.{m.group(3)}".lower().strip()
-            if reconstructed not in seen_emails and not reconstructed.endswith((".png", ".jpg", ".webp")):
+            if reconstructed not in seen_emails and not reconstructed.endswith((".png", ".jpg", ".webp")) and not _is_blocked(reconstructed):
                 seen_emails.add(reconstructed)
                 raw_match_text = m.group(0)
                 scope = PublicEmailExtractor.classify_scope(reconstructed, target_person_name)
@@ -117,7 +150,7 @@ class PublicEmailExtractor:
                     source_url=source_url,
                     source_type="obfuscated_text",
                     evidence_quote=f"De-obfuscated from '{raw_match_text}'",
-                    confidence=0.75 if scope == "person_direct_work" else 0.6,
+                    confidence=0.75 if scope == "person_direct_work" else 0.65,
                 ))
 
         return results

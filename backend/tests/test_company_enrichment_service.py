@@ -83,3 +83,76 @@ async def test_enrich_company_extracts_channels_without_person():
         
         # Ensure company was updated in DB
         assert mock_db.companies.update_one.called
+
+@pytest.mark.asyncio
+async def test_enrich_company_header_phone_footer_email_and_instagram_icon():
+    service = CompanyEnrichmentService()
+
+    client_html = """
+    <!DOCTYPE html>
+    <html>
+      <head><title>Mahavir Builders - Premium Real Estate</title></head>
+      <body>
+        <header>
+          <div class="top-bar">
+            <span>Call Us:</span>
+            <a href="tel:+919088846601">+91 9088846601</a>
+          </div>
+        </header>
+
+        <main>
+          <h1>Building Tomorrow's Landmarks</h1>
+          <p>Over 25 years of excellence in architectural construction and urban housing.</p>
+        </main>
+
+        <footer>
+          <div class="footer-contact">
+            <p>Email: <a href="mailto:info@mahavirbuilders.com">info@mahavirbuilders.com</a></p>
+          </div>
+          <div class="footer-socials">
+            <!-- Instagram icon link without anchor text -->
+            <a href="https://instagram.com/mahavirbuilders" target="_blank" rel="noopener">
+              <svg class="icon icon-instagram" viewBox="0 0 24 24"><path d="M12 2..." /></svg>
+            </a>
+          </div>
+        </footer>
+      </body>
+    </html>
+    """
+
+    mock_db = AsyncMock()
+    comp_id = str(ObjectId())
+    fake_company = {
+        "_id": ObjectId(comp_id),
+        "name": "Mahavir Builders",
+        "website": "https://mahavirbuilders.com",
+        "public_contact_channels": [],
+        "enrichment_status": "pending",
+    }
+    mock_db.companies.find_one = AsyncMock(return_value=fake_company)
+    mock_db.companies.update_one = AsyncMock()
+
+    async def mock_get(self, url, *args, **kwargs):
+        resp = MagicMock(spec=httpx.Response)
+        resp.status_code = 200
+        resp.url = httpx.URL(str(url))
+        resp.text = client_html
+        return resp
+
+    with patch("httpx.AsyncClient.get", new=mock_get):
+        res = await service.enrich_company(mock_db, comp_id)
+        assert res is not None
+        assert res["enrichment_status"] == "enriched"
+
+        # Check emails list
+        emails = res.get("emails", [])
+        assert "info@mahavirbuilders.com" in emails
+
+        # Check phones list
+        phones = res.get("phones", [])
+        assert "+919088846601" in phones
+
+        # Check socials dictionary
+        socials = res.get("socials", {})
+        assert socials.get("instagram") == "https://instagram.com/mahavirbuilders"
+
