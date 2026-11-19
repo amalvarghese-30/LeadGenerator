@@ -160,12 +160,6 @@ class ClientClassifier:
             ref["collected_at"] = now_iso
             ref["verification_status"] = "pending_review"
 
-            # If page is a Published Client Profile, classify featured client as published_customer_profile
-            if page_meta.get("page_category") == "Published Client Profile" and ref.get("relationship_type") in (
-                "ordinary_mention", "featured_personality", "unclear_relationship"
-            ):
-                ref["relationship_type"] = "published_customer_profile"
-
             # Check evidence validity with competitor blacklist
             is_valid, rejection_reasons = self.evidence_validator.validate(
                 ref,
@@ -211,6 +205,16 @@ class ClientClassifier:
         """Merge DOM, deterministic, and AI results, prioritizing DOM evidence with exact outbound URLs."""
         by_key: Dict[str, Dict] = {}
 
+        def identity_key(ref: Dict) -> str:
+            person = " ".join(str(ref.get("person_name") or "").split()).casefold()
+            company = " ".join(str(ref.get("company_name") or "").split()).casefold()
+
+            if person:
+                return f"person:{person}|company:{company}"
+            if company:
+                return f"comp:{company}"
+            return ""
+
         # 1. Seed with high-fidelity DOM candidates
         for ref in (dom_refs or []):
             comp = ref.get("company_name") or ""
@@ -222,7 +226,7 @@ class ClientClassifier:
         for ref in (det or []):
             person = ref.get("person_name")
             comp = ref.get("company_name")
-            key = (person or f"comp:{comp}" or "").lower()
+            key = identity_key(ref)
             if not key:
                 continue
             if key in by_key:
@@ -241,7 +245,7 @@ class ClientClassifier:
         for ref in (ai or []):
             person = ref.get("person_name")
             comp = ref.get("company_name")
-            key = (person or f"comp:{comp}" or "").lower()
+            key = identity_key(ref)
             if not key:
                 continue
             if key in by_key:

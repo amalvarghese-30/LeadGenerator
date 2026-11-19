@@ -319,3 +319,115 @@ def test_page_classification_signals():
     )
     assert blog["is_client_reference_page"] is False
     assert blog["page_category"] == "General Article"
+
+# LeadIntel classifier and profile evidence regressions
+
+
+# LeadIntel classifier and profile evidence regressions
+
+def test_reverse_role_explicit_client_label_is_portfolio_reference():
+    analyzer = PageAnalyzer()
+    text = (
+        "Client: Acme Technologies, CEO: Jane Doe. "
+        "This is an explicitly identified client relationship."
+    )
+
+    candidates = analyzer.analyze(text, "https://example.com/clients")
+    matches = [
+        c for c in candidates
+        if c.get("extraction_method") == "deterministic_reverse_role"
+    ]
+
+    assert any(
+        c.get("person_name") == "Jane Doe"
+        and c.get("company_name") == "Acme Technologies"
+        and c.get("relationship_type") == "client_portfolio_reference"
+        for c in matches
+    )
+
+
+def test_reverse_role_company_label_is_not_automatically_a_client():
+    analyzer = PageAnalyzer()
+    text = (
+        "Company: Acme Technologies, CEO: Jane Doe. "
+        "The organization is mentioned in this general business article."
+    )
+
+    candidates = analyzer.analyze(text, "https://example.com/about")
+    matches = [
+        c for c in candidates
+        if c.get("extraction_method") == "deterministic_reverse_role"
+    ]
+
+    assert any(c.get("person_name") == "Jane Doe" for c in matches)
+    assert all(
+        c.get("relationship_type") not in {
+            "confirmed_client",
+            "confirmed_client_case_study",
+            "case_study_client",
+            "client_testimonial",
+            "testimonial_client",
+            "client_portfolio_reference",
+            "published_customer_profile",
+        }
+        for c in matches
+    )
+
+
+def test_profile_url_slug_without_name_in_page_text_is_rejected():
+    analyzer = PageAnalyzer()
+    text = (
+        "This customer profile explains the services offered by the agency. "
+        "It contains general information but does not identify the profile subject."
+    )
+
+    candidates = analyzer.analyze(
+        text, "https://example.com/profile/jane-doe"
+    )
+
+    assert not any(
+        c.get("extraction_method") == "deterministic_published_profile"
+        for c in candidates
+    )
+
+
+def test_profile_name_without_customer_profile_evidence_is_rejected():
+    analyzer = PageAnalyzer()
+    text = (
+        "Jane Doe is a technology executive with extensive industry experience. "
+        "This ordinary biography does not describe a client relationship."
+    )
+
+    candidates = analyzer.analyze(
+        text, "https://example.com/profile/jane-doe"
+    )
+
+    assert not any(
+        c.get("extraction_method") == "deterministic_published_profile"
+        for c in candidates
+    )
+
+
+def test_genuine_published_profile_uses_actual_source_evidence():
+    analyzer = PageAnalyzer()
+    text = (
+        "Client profile: Jane Doe. "
+        "Jane Doe is featured in this client profile describing her professional journey. "
+        "The page discusses her work and background in detail."
+    )
+
+    candidates = analyzer.analyze(
+        text, "https://example.com/profile/jane-doe"
+    )
+
+    matches = [
+        c for c in candidates
+        if c.get("extraction_method") == "deterministic_published_profile"
+    ]
+
+    assert len(matches) == 1
+    assert matches[0]["person_name"] == "Jane Doe"
+    assert matches[0]["company_name"] is None
+    assert matches[0]["relationship_type"] == "published_customer_profile"
+    assert matches[0]["evidence_quote"] in text
+    assert "Published client profile for" not in matches[0]["evidence_quote"]

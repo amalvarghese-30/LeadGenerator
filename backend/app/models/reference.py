@@ -7,6 +7,8 @@ class ProviderClientReferenceDocument(BaseModel):
     id: Optional[str] = Field(None, alias="_id")
     provider_id: str
     company_id: Optional[str] = None
+    person_name: Optional[str] = None
+    designation: Optional[str] = None
     company_name: Optional[str] = None
     company_website: Optional[str] = None
     client_name: Optional[str] = None

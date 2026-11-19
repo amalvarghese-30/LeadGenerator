@@ -64,10 +64,12 @@ NAME_ROLE_COMPANY_PATTERN = re.compile(
 
 # "Company: TechVision, Founder: John Doe"
 REVERSE_ROLE_PATTERN = re.compile(
-    r'(?:Client|Company|Organi[sz]ation|Business|Firm)\s*[:–-]\s*([A-Z][\w\s&\.\-\']{2,50}?)'
+    r'(?i:(Client|Company|Organi[sz]ation|Business|Firm))\s*[:–-]\s*'
+    r'(?i:([A-Z][\w\s&\.\-\']{2,50}?))'
     r'[,\n;\s]+'
-    r'(?:Founder|CEO|Director|Contact|Executive|Owner)\s*[:–-]\s*([A-Z][a-zA-Z\.\-\']+(?:\s+[A-Z][a-zA-Z\.\-\']+){1,3})',
-    re.IGNORECASE,
+    r'(?i:(?:Founder|CEO|Director|Contact|Executive|Owner))\s*[:–-]\s*'
+    r'((?-i:[A-Z][a-zA-Z\-\']*(?:\s+(?:[A-Z][a-zA-Z\-\']*|[A-Z]\.)){1,3}))'
+    r'(?=\s*(?:[.,;:!?)]|$))'
 )
 
 # Company-only portfolio card pattern: "Client: Acme Corp" / "Project: Acme Corp" / "Our work for Acme Corp"
@@ -224,8 +226,9 @@ class PageAnalyzer:
         # Pattern 3: Reverse format "Client: X, Founder: Y"
         # -------------------------------------------------------------
         for match in REVERSE_ROLE_PATTERN.finditer(sample):
-            raw_comp = match.group(1).strip()
-            raw_name = match.group(2).strip()
+            label = match.group(1).strip().casefold()
+            raw_comp = match.group(2).strip()
+            raw_name = match.group(3).strip()
 
             ctx = self._context(sample, match.start(), match.end(), 250)
             is_valid, reasons = self.name_validator.validate_person_name(raw_name, context=ctx)
@@ -243,13 +246,17 @@ class PageAnalyzer:
 
             rel_type, confidence = self._classify_candidate_relationship(ctx, cleaned_name, raw_comp)
 
+            if label == "client":
+                rel_type = "client_portfolio_reference"
+                confidence = max(confidence, 0.80)
+
             candidates.append({
                 "person_name": cleaned_name,
                 "designation": "Founder/Executive",
                 "company_name": self._clean_company(raw_comp),
-                "relationship_type": rel_type if rel_type != "unclear_relationship" else "confirmed_client_case_study",
+                "relationship_type": rel_type,
                 "evidence_quote": ctx[:450],
-                "confidence": max(confidence, 0.85),
+                "confidence": confidence,
                 "extraction_method": "deterministic_reverse_role",
                 "source_url": url,
             })
@@ -287,40 +294,57 @@ class PageAnalyzer:
 
         # -------------------------------------------------------------
         # Pattern 5: Published Client Profile Page Subject
-        # -------------------------------------------------------------
+        # URL slugs are discovery hints only, never identity or relationship evidence.
         parsed_path = urlparse(url).path.strip('/')
-        if (parsed_path.startswith("p/") or parsed_path.startswith("profile/") or parsed_path.startswith("client-profile/")) and parsed_path not in ("p/welcome", "profile"):
+        if (
+            parsed_path.startswith(("p/", "profile/", "client-profile/"))
+            and parsed_path not in ("p/welcome", "profile")
+        ):
             slug = parsed_path.split("/")[-1]
-            tokens = [t.capitalize() for t in slug.split("-") if t.lower() not in ("adv", "dr", "mr", "ms", "mrs", "prof")]
+            tokens = [
+                token.capitalize()
+                for token in slug.split("-")
+                if token.lower() not in ("adv", "dr", "mr", "ms", "mrs", "prof")
+            ]
             name_from_slug = " ".join(tokens)
-
-            # Extract company from page title
-            comp_from_title = None
-            if title and "|" in title:
-                parts = [pt.strip() for pt in title.split("|") if pt.strip()]
-                if len(parts) > 1:
-                    comp_from_title = parts[-1]
 
             is_valid_name, _ = self.name_validator.validate_person_name(name_from_slug)
             if is_valid_name:
                 cleaned_name = self.name_validator.clean_name(name_from_slug)
-                key = cleaned_name.lower()
-                if key not in seen_keys:
-                    seen_keys.add(key)
-                    first_sentence = (text or "").strip().split("\n")[0]
-                    if len(first_sentence) < 30:
-                        first_sentence = (text or "").strip()[:250]
-                    evidence = f"Published client profile for {cleaned_name}: {first_sentence}"[:450]
-                    candidates.append({
-                        "person_name": cleaned_name,
-                        "designation": None,
-                        "company_name": self._clean_company(comp_from_title),
-                        "relationship_type": "published_customer_profile",
-                        "evidence_quote": evidence,
-                        "confidence": 0.95,
-                        "extraction_method": "deterministic_published_profile",
-                        "source_url": url,
-                    })
+                name_match = re.search(
+                    rf"\b{re.escape(cleaned_name)}\b",
+                    sample,
+                    re.IGNORECASE,
+                )
+
+                if name_match:
+                    profile_context = self._context(
+                        sample, name_match.start(), name_match.end(), 180
+                    )
+                    rel_type, confidence = self._classify_candidate_relationship(
+                        profile_context, cleaned_name
+                    )
+
+                    if rel_type == "published_customer_profile":
+                        key = cleaned_name.casefold()
+                        if key not in seen_keys:
+                            seen_keys.add(key)
+
+                            # Preserve an actual source excerpt containing the name.
+                            evidence_start = max(0, name_match.start() - 120)
+                            evidence_end = min(len(sample), name_match.end() + 180)
+                            evidence = sample[evidence_start:evidence_end].strip()
+
+                            candidates.append({
+                                "person_name": cleaned_name,
+                                "designation": None,
+                                "company_name": None,
+                                "relationship_type": "published_customer_profile",
+                                "evidence_quote": evidence[:450],
+                                "confidence": confidence,
+                                "extraction_method": "deterministic_published_profile",
+                                "source_url": url,
+                            })
 
         return candidates
 

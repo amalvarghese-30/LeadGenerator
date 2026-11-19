@@ -5,6 +5,8 @@ from pydantic import BaseModel, Field
 class ReferenceCreate(BaseModel):
     provider_id: str
     company_id: Optional[str] = None
+    person_name: Optional[str] = None
+    designation: Optional[str] = None
     company_name: Optional[str] = None
     company_website: Optional[str] = None
     client_name: Optional[str] = None
@@ -34,6 +36,8 @@ class ReferenceResponse(BaseModel):
     id: str
     provider_id: str
     company_id: Optional[str] = None
+    person_name: Optional[str] = None
+    designation: Optional[str] = None
     company_name: Optional[str] = None
     company_website: Optional[str] = None
     client_name: Optional[str] = None

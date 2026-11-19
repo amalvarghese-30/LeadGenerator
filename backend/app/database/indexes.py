@@ -51,6 +51,7 @@ async def create_indexes(db: AsyncIOMotorDatabase) -> None:
     await db.provider_client_references.create_indexes([
         IndexModel([("provider_id", ASCENDING)], name="references_provider_id"),
         IndexModel([("source_url", ASCENDING)], name="references_source_url"),
+        IndexModel([("dedup_key", ASCENDING)], unique=True, partialFilterExpression={"dedup_key": {"$type": "string"}}, name="references_dedup_key_unique"),
         IndexModel([("verification_status", ASCENDING)], name="references_verification_status"),
         IndexModel([("created_at", DESCENDING)], name="references_created_at"),
     ])

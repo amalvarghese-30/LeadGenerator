@@ -9,6 +9,7 @@ Background Job Processor — Complete Pipeline.
 - Graceful resource cleanup, cancellation checking, and failure isolation.
 """
 import asyncio
+import inspect
 import os
 import logging
 import traceback
@@ -450,6 +451,7 @@ class JobProcessor:
                     )
 
                     # 1. Company Creation & Persistence
+                    # A person-only reference must not create a fake company.
                     company_id = None
                     comp_name = ref.get("company_name") or ref.get("client_name")
                     comp_website = ref.get("company_website") or ref.get("client_website")
@@ -464,56 +466,92 @@ class JobProcessor:
                         }
                         comp = await company_service.create(comp_data)
                         company_id = comp.get("id")
+
                         if company_id and company_id not in discovered_company_ids:
                             discovered_company_ids.append(company_id)
+
                         if comp.get("created", False):
                             companies_created += 1
                             await log_job_event(
-                                db, job_id, "extracting", "success", "new_crm_record_saved",
+                                db, job_id, "extracting", "success",
+                                "new_crm_record_saved",
                                 f"Created company CRM record: {comp_name} ({comp_website or 'no website yet'})"
                             )
 
-                    # 2. Reference Document Creation
+                    # 2. Persist the reference, including person-only evidence.
                     ref["company_id"] = company_id
                     ref["provider_id"] = provider_id
-                    ref_doc = await reference_service.create(ref)
-                    valid_client_references += 1
-                    pending_verification += 1
-                    discovered_client_references.append(ref_doc)
 
-                    # Update company's source references list
-                    if company_id and ref_doc.get("id"):
+                    if not comp_name and not ref.get("person_name"):
+                        warnings.append(_err(
+                            "crm",
+                            "Reference skipped because it has no person or company identity",
+                            url=ref.get("source_url"),
+                            err_type="crm",
+                        ))
+                        continue
+
+                    ref_doc = await reference_service.create(ref)
+                    reference_created = ref_doc.get("created", True)
+
+                    if reference_created:
+                        valid_client_references += 1
+                        pending_verification += 1
+
+                    ref_id = ref_doc.get("id")
+                    if ref_id and not any(
+                        item.get("id") == ref_id
+                        for item in discovered_client_references
+                    ):
+                        discovered_client_references.append(ref_doc)
+
+                    # Update company's source references list.
+                    if company_id and ref_id:
                         await db.companies.update_one(
                             {"_id": ObjectId(company_id)},
-                            {"$addToSet": {"source_references": ref_doc["id"]}}
+                            {"$addToSet": {"source_references": ref_id}},
                         )
 
-                    # 3. Optional Person Contact Creation (ONLY if genuine individual person name exists)
+                    # 3. Create/update a contact when a genuine person exists.
                     person_name = ref.get("person_name")
-                    if person_name and person_name.strip().lower() != (comp_name or "").strip().lower():
+
+                    if (
+                        person_name
+                        and person_name.strip().casefold()
+                        != (comp_name or "").strip().casefold()
+                    ):
                         contact, was_new = await contact_service.create({
                             "full_name": person_name,
-                            "designation": ref.get("designation") or "Executive",
+                            "designation": ref.get("designation"),
                             "company_id": company_id,
                             "company_name": comp_name,
                             "contact_verification_status": "discovered",
-                            "source_references": [ref_doc.get("id")],
+                            "source_references": [ref_id] if ref_id else [],
                         })
+
                         contact_id = contact.get("id")
+
                         if contact_id and contact_id not in all_job_contact_ids:
                             all_job_contact_ids.append(contact_id)
+
                         if was_new:
                             contacts_created += 1
                             await log_job_event(
-                                db, job_id, "extracting", "success", "contact_found",
-                                f"Discovered person contact: {person_name} ({comp_name})"
+                                db, job_id, "extracting", "success",
+                                "contact_found",
+                                f"Discovered person contact: {person_name} ({comp_name or 'company not established'})"
                             )
+
+                        # Do not create leads for person-only references.
+                        # For company-associated contacts, LeadService handles deduplication.
+                        if company_id and contact_id:
                             lead_res = await lead_service.create(
                                 contact_id=contact_id,
                                 company_id=company_id,
                                 lead_source=provider_id,
                                 initial_stage="discovered",
                             )
+
                             if lead_res.get("created", False):
                                 leads_created += 1
 

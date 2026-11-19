@@ -2,6 +2,7 @@ import pytest
 from unittest.mock import AsyncMock, patch, MagicMock
 from bson import ObjectId
 from app.workers.job_processor import JobProcessor
+from app.crm.reference_service import ReferenceService
 
 @pytest.mark.asyncio
 async def test_full_e2e_portfolio_discovery_pipeline():
@@ -89,7 +90,21 @@ async def test_full_e2e_portfolio_discovery_pipeline():
         }
     ])
 
-    with patch.object(processor.company_enricher, "enrich_company") as mock_enrich:
+    with (
+        patch.object(
+            processor.company_enricher, "enrich_company"
+        ) as mock_enrich,
+        patch.object(
+            ReferenceService,
+            "create",
+            new=AsyncMock(
+                side_effect=lambda *args, **kwargs: {
+                    "id": str(ObjectId()),
+                    "created": True,
+                }
+            ),
+        ) as mock_reference_create,
+    ):
         mock_enrich.return_value = {
             "name": "Mahavir Builders",
             "enrichment_status": "enriched",
@@ -107,7 +122,7 @@ async def test_full_e2e_portfolio_discovery_pipeline():
 
         # Check that companies were inserted
         assert mock_db.companies.insert_one.called
-        assert mock_db.provider_client_references.insert_one.called
+        assert mock_reference_create.await_count >= 1
         assert mock_enrich.called
 
         # Verify job was marked completed
