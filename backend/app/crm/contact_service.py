@@ -245,7 +245,10 @@ async def list_contacts(
     if company_id:
         query["company_id"] = company_id
     if is_suppressed is not None:
-        query["is_suppressed"] = is_suppressed
+        if is_suppressed is False:
+            query["is_suppressed"] = {"$ne": True}
+        else:
+            query["is_suppressed"] = True
     if verification_status:
         query["contact_verification_status"] = verification_status
     if enrichment_status:

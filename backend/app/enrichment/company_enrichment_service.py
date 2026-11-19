@@ -420,12 +420,16 @@ class CompanyEnrichmentService:
                         "designation": dm.get("designation") or "Executive",
                         "source": dm.get("discovery_source") or "company_leadership_enrichment",
                         "verification_status": dm.get("verification_status", "source_verified"),
+                        "contact_verification_status": "verified" if (dm.get("email") or dm.get("phone")) else "discovered",
+                        "enrichment_status": "enriched" if (dm.get("email") or dm.get("phone")) else "partially_enriched",
                         "email": dm.get("email") or (dm.get("public_emails")[0] if dm.get("public_emails") else None),
                         "phone": dm.get("phone") or (dm.get("public_phones")[0] if dm.get("public_phones") else None),
                         "linkedin_url": dm.get("linkedin_url"),
                         "professional_urls": dm.get("professional_urls") or {},
                         "evidence_quote": dm.get("evidence_quote"),
                         "associated_companies": [assoc_entry],
+                        "is_suppressed": False,
+                        "do_not_contact": False,
                         "created_at": now,
                         "updated_at": now,
                     }
@@ -464,6 +468,59 @@ class CompanyEnrichmentService:
                     })
             except Exception as ce:
                 logger.debug("[COMPANY_ENRICH] Error creating decision-maker contact: %s", ce)
+
+        # If no specific contacts exist for this company, create a primary corporate/HQ contact
+        # so this client company appears in the Client & Contact Directory with all its enriched channels
+        try:
+            existing_company_contact = await db.contacts.find_one({
+                "$or": [
+                    {"company_id": company_id},
+                    {"associated_companies.company_id": str(company_id)},
+                    {"company_name": company_name},
+                ]
+            })
+            if not existing_company_contact and (all_emails or all_phones or all_socials or company_website):
+                corp_doc = {
+                    "company_id": company_id,
+                    "company_name": company_name,
+                    "full_name": company_name,
+                    "designation": "Company Headquarters",
+                    "source": "company_website_enrichment",
+                    "verification_status": "source_verified" if (all_emails or all_phones) else "discovered",
+                    "contact_verification_status": "verified" if (all_emails or all_phones) else "discovered",
+                    "enrichment_status": "enriched" if (all_emails or all_phones) else "partially_enriched",
+                    "email": primary_email,
+                    "phone": primary_phone,
+                    "linkedin_url": all_socials.get("linkedin"),
+                    "professional_urls": all_socials,
+                    "evidence_quote": f"Official contact channels discovered for {company_name}",
+                    "associated_companies": [{
+                        "company_id": str(company_id),
+                        "company_name": company_name,
+                        "designation": "Company Headquarters",
+                        "source": "company_website_enrichment",
+                        "confidence": 1.0,
+                        "verification_status": "source_verified",
+                        "verified_at": now_iso,
+                    }],
+                    "is_suppressed": False,
+                    "do_not_contact": False,
+                    "created_at": now,
+                    "updated_at": now,
+                }
+                ins_corp = await db.contacts.insert_one(corp_doc)
+                corp_doc["_id"] = str(ins_corp.inserted_id)
+                created_contacts.append(corp_doc)
+                associated_people.append({
+                    "contact_id": str(ins_corp.inserted_id),
+                    "full_name": company_name,
+                    "designation": "Company Headquarters",
+                    "linkedin_url": all_socials.get("linkedin"),
+                    "verification_status": "source_verified",
+                    "confidence": 1.0,
+                })
+        except Exception as corp_err:
+            logger.debug("[COMPANY_ENRICH] Error creating corporate contact: %s", corp_err)
 
         final_status = "enriched" if (extracted_channels or associated_people) else "no_contacts_found"
 
