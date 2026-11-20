@@ -217,6 +217,7 @@ META_ADS_LIST = [
     ("ANewswire", "https://anewswire.com"),
     ("Fuel Momentum", "https://fuelmomentum.gumroad.com/l/PR-Blueprint"),
     ("Glam Observer", "https://glamobserver.com/free-webinar"),
+    ("Vicky Jones", "https://docs.google.com/forms/d/e/1FAIpQLSelMYyGSUuD6wyhZR2EISgCDaPvtCtKsNSzYpd1JQZtFl8_4g/viewform"),
     ("Pitch magazine: Stories Of Modern Sport", "https://www.pitch-mag.co.uk/young-sports-journalist-competition"),
     ("Durvesh Yadav", "https://durveshyadav.com/dailyhunt/"),
     ("PressWhizz", "https://presswhizz.com"),
@@ -240,6 +241,7 @@ META_ADS_LIST = [
     ("Vanie Poyey Photography", "https://poyeyphotos.com/3pillars/"),
     ("Ottomanium", "https://www.blaxn.com/casting"),
     ("Skillify Edtech Usa,Uk,Canada", "http://www.skillifytech.com"),
+    ("Surfer", "https://youtu.be/WcP3PN0lzh4"),
     ("Lil Em’s Custom Cookies", "https://www.gomega.ai/demo"),
     ("Neil Patel", "https://app.neilpatel.com/en/ai-search-visibility"),
     ("WP Engine", "https://wpengine.com/ai-digital-agency-website-strategy-guide"),
@@ -263,7 +265,7 @@ META_ADS_LIST = [
     ("Charle", "https://www.charle.co.uk/guides/ai-shopping-guide/"),
 ]
 
-async def queue_entries(entries, page_limit=50):
+async def queue_entries(entries, page_limit=50, force=False):
     await connect_to_mongodb()
     db = get_database()
     now = datetime.now(timezone.utc)
@@ -311,12 +313,13 @@ async def queue_entries(entries, page_limit=50):
             if not provider.get("name") or provider.get("name") == "Unknown":
                 await db.providers.update_one({"_id": provider["_id"]}, {"$set": {"name": prov_name}})
 
+        active_status = ["pending", "running"] if force else ["pending", "running", "completed"]
         active = await db.crawl_jobs.find_one({
             "provider_id": prov_id,
-            "status": {"$in": ["pending", "running"]},
+            "status": {"$in": active_status},
         })
         if active:
-            print(f"[-] {prov_name} ({clean_url}) already has active job {active['_id']} ({active.get('status')})")
+            print(f"[-] {prov_name} ({clean_url}) already has {active.get('status')} job {active['_id']}")
             skipped_count += 1
             continue
 
@@ -372,6 +375,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--list", choices=["research", "meta", "all"], default="research", help="Which list to queue")
     parser.add_argument("--limit", type=int, default=50, help="Page crawl limit per target")
+    parser.add_argument("--force", action="store_true", help="Force requeue even if already completed")
     args = parser.parse_args()
 
     selected = []
@@ -391,4 +395,4 @@ if __name__ == "__main__":
             except Exception:
                 selected.append((n, u))
 
-    asyncio.run(queue_entries(selected, page_limit=args.limit))
+    asyncio.run(queue_entries(selected, page_limit=args.limit, force=args.force))
