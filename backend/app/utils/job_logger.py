@@ -89,4 +89,9 @@ async def log_job_event(
         serialized["id"] = f"ev-{int(now.timestamp() * 1000)}"
 
     await stream_manager.broadcast(str(job_id), serialized)
+    try:
+        from app.database.redis_client import publish_job_event
+        await publish_job_event(str(job_id), serialized)
+    except Exception:
+        pass
     return serialized

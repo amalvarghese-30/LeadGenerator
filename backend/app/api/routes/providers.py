@@ -2,7 +2,14 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from app.auth.dependencies import get_db, get_current_user
-from app.crm.provider_service import create_provider, get_provider, list_providers, update_provider, delete_provider
+from app.crm.provider_service import (
+    create_provider,
+    get_provider,
+    list_providers,
+    update_provider,
+    delete_provider,
+    list_provider_scans,
+)
 from app.schemas.provider import ProviderCreate, ProviderUpdate, ProviderResponse
 from app.schemas.common import PaginatedResponse, paginate, build_skip_limit
 
@@ -33,11 +40,42 @@ async def list_providers_route(
     country: Optional[str] = None,
     verification_status: Optional[str] = None,
     discovery_status: Optional[str] = None,
+    scanned_only: Optional[bool] = Query(None),
+    scan_status: Optional[str] = Query("all"),
+    sort_by: str = Query("last_crawled_at"),
+    order: str = Query("desc"),
     db: AsyncIOMotorDatabase = Depends(get_db),
     _user: dict = Depends(get_current_user),
 ):
     skip, limit = build_skip_limit(page, page_size)
-    items, total = await list_providers(db, skip, limit, search, category, country, verification_status, discovery_status)
+    sort_dir = -1 if order.lower() == "desc" else 1
+    items, total = await list_providers(
+        db,
+        skip=skip,
+        limit=limit,
+        search=search,
+        category=category,
+        country=country,
+        verification_status=verification_status,
+        discovery_status=discovery_status,
+        scanned_only=scanned_only,
+        scan_status=scan_status,
+        sort_by=sort_by,
+        sort_dir=sort_dir,
+    )
+    return paginate([_fmt(i) for i in items], total, page, limit)
+
+
+@router.get("/{provider_id}/scans", response_model=PaginatedResponse)
+async def get_provider_scans_route(
+    provider_id: str,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+    _user: dict = Depends(get_current_user),
+):
+    skip, limit = build_skip_limit(page, page_size)
+    items, total = await list_provider_scans(db, provider_id, skip=skip, limit=limit)
     return paginate([_fmt(i) for i in items], total, page, limit)
 
 

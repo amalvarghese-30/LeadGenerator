@@ -603,7 +603,7 @@ class RateLimitService:
 
         headers = {
             "Accept": "application/vnd.github+json",
-            "User-Agent": "LeadIntel-RateLimitChecker/1.0",
+            "User-Agent": "CandidDigital-RateLimitChecker/1.0",
         }
         if stored_token:
             headers["Authorization"] = f"Bearer {stored_token}"

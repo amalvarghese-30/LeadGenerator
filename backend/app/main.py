@@ -64,9 +64,9 @@ async def lifespan(app: FastAPI):
     logger.info("Shutdown complete.")
 
 app = FastAPI(
-    title=settings.APP_NAME,
+    title="Candid Digital Intelligence & Lead Discovery Platform",
     version=settings.APP_VERSION,
-    description="Provider Intelligence & CRM Lead Discovery Platform REST API",
+    description="Provider Intelligence & CRM Lead Discovery Platform — Candid Digital (https://candiddigital.in/)",
     docs_url="/api/docs",
     redoc_url="/api/redoc",
     lifespan=lifespan
@@ -105,8 +105,8 @@ app.include_router(rate_limits.router, prefix="/api")
 @app.get("/api/health")
 async def health_check():
     return {
+        "service": "Candid Digital API",
         "status": "healthy",
-        "app": settings.APP_NAME,
         "version": settings.APP_VERSION,
         "environment": settings.ENVIRONMENT
     }

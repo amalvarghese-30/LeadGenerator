@@ -1,5 +1,5 @@
 """
-Database Seeder for LeadIntel Platform.
+Database Seeder for Candid Digital Platform.
 Safely seeds default admin user and ensures collection indexes are built.
 No mock/fake records are seeded to prevent dummy data leaks into production.
 """
@@ -22,13 +22,13 @@ async def seed_database():
 
     # Seed Admin User ONLY
     print("Ensuring default admin user exists...")
-    admin_email = "admin@leadintel.local"
+    admin_email = "admin@candiddigital.in"
     admin_user = await db.users.find_one({"email": admin_email})
     if not admin_user:
         hashed = hash_password("Admin@123456")
         res = await db.users.insert_one({
             "email": admin_email,
-            "full_name": "LeadIntel Administrator",
+            "full_name": "Candid Digital Admin",
             "hashed_password": hashed,
             "role": "admin",
             "is_active": True,

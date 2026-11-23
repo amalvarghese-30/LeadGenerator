@@ -377,7 +377,7 @@ https://www.linkedin.com/`;
       setConnectionStatus('streaming');
 
       try {
-        const token = localStorage.getItem('leadintel_token');
+        const token = localStorage.getItem('token') || localStorage.getItem('leadintel_token');
         const url = `${getJobEventsStreamUrl(activeJobId)}${
           lastEventIdRef.current ? `?since_id=${lastEventIdRef.current}` : ''
         }`;

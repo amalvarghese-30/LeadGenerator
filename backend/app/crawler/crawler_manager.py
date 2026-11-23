@@ -11,15 +11,23 @@ Website Crawler Engine — High-Resilience Stealth Pipeline.
   * Metric recording & automatic domain cooldown
 - Duplicate content & canonical URL handling
 - SSRF protection & safe cancellation support
+- Stage 3 enhancements:
+  * Shared HTTPX connection pool (HTTP/2, keepalive)
+  * Bounded concurrent crawling via asyncio.Semaphore
+  * Per-domain rate-limiting lock (prevents thundering herd per domain)
+  * ThreadPoolExecutor for CPU-bound HTML parsing and NLP extraction
+  * Reused Playwright browser with isolated contexts per page
+  * asyncio.Semaphore(2) for Playwright concurrency
 """
 import asyncio
+import concurrent.futures
 import hashlib
 import logging
 import random
 import time
 from datetime import datetime, timezone
 from typing import List, Dict, Optional, Any, Callable, Awaitable
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlparse
 from bs4 import BeautifulSoup
 from bson import ObjectId
 import httpx
@@ -41,15 +49,22 @@ SKIP_CONTENT_TYPES = (
 
 MIN_WORDS_FOR_JS_FALLBACK = 80
 
+# Module-level shared thread pool for CPU-bound parsing (BeautifulSoup, trafilatura, NLP)
+_thread_pool = concurrent.futures.ThreadPoolExecutor(max_workers=8)
+
 
 class CrawlerManager:
+    # Class-level per-domain rate limiting state (shared across all instances in a process)
+    _domain_locks: Dict[str, asyncio.Lock] = {}
+    _domain_last_request: Dict[str, float] = {}
+
     def __init__(
         self,
         max_pages: int = 50,
         delay_seconds: float = 1.0,
         timeout: int = 25,
         user_agent: Optional[str] = None,
-        concurrency: int = 3,
+        concurrency: int = 8,
         enable_playwright: bool = True,
         enable_selenium: bool = True,
     ):
@@ -65,11 +80,54 @@ class CrawlerManager:
         self.robots = RobotsChecker(user_agent=user_agent)
         self._playwright = None
         self._playwright_browser = None
+        self._playwright_semaphore: Optional[asyncio.Semaphore] = None
         self._selenium_driver = None
         self._seen_content_hashes: set = set()
 
+        # Shared HTTPX client — created lazily, reused across all crawls in this manager's lifetime
+        self._shared_client: Optional[httpx.AsyncClient] = None
+
+    async def _get_shared_client(self) -> httpx.AsyncClient:
+        """Return (or create) the shared HTTPX connection pool."""
+        if self._shared_client is None or self._shared_client.is_closed:
+            self._shared_client = httpx.AsyncClient(
+                http2=HAS_HTTP2,
+                limits=httpx.Limits(
+                    max_connections=50,
+                    max_keepalive_connections=20,
+                    keepalive_expiry=30,
+                ),
+                timeout=httpx.Timeout(self.timeout),
+                follow_redirects=True,
+            )
+        return self._shared_client
+
+    async def _close_shared_client(self):
+        """Close the shared HTTPX client, if open."""
+        if self._shared_client and not self._shared_client.is_closed:
+            try:
+                await self._shared_client.aclose()
+            except Exception as e:
+                logger.debug("Shared HTTPX client close error: %s", e)
+            self._shared_client = None
+
+    async def _respect_domain_rate(self, domain: str, delay: float):
+        """Acquire a per-domain lock and sleep if needed to respect recommended_delay_seconds."""
+        if domain not in self._domain_locks:
+            # Guard against race: two coroutines both checking at the same instant
+            self._domain_locks.setdefault(domain, asyncio.Lock())
+        async with self._domain_locks[domain]:
+            now = time.monotonic()
+            last = self._domain_last_request.get(domain, 0)
+            wait = delay - (now - last)
+            if wait > 0:
+                await asyncio.sleep(wait + random.uniform(0.5, 2.5))
+            self._domain_last_request[domain] = time.monotonic()
+
     async def cleanup(self):
-        """Guaranteed browser cleanup."""
+        """Guaranteed browser and connection pool cleanup."""
+        await self._close_shared_client()
+
         if self._playwright_browser:
             try:
                 await self._playwright_browser.close()
@@ -125,7 +183,7 @@ class CrawlerManager:
         except Exception:
             return getattr(resp, "text", "")
 
-    async def crawl_url(self, url: str) -> Dict[str, Any]:
+    async def crawl_url(self, url: str, shared_client: Optional[httpx.AsyncClient] = None) -> Dict[str, Any]:
         result = {
             "url": url,
             "canonical_url": None,
@@ -184,10 +242,16 @@ class CrawlerManager:
                 except Exception:
                     pass
 
-        # Dynamic jittered delay
+        # Per-domain rate limiting (prevents multiple concurrent requests to same domain thundering)
         base_delay = max(self.delay_seconds, float(policy.get("recommended_delay_seconds") or 1.0))
-        jittered_delay = base_delay + random.uniform(0.3, 1.2)
-        await asyncio.sleep(jittered_delay)
+        try:
+            parsed_domain = urlparse(url).netloc or url
+            await self._respect_domain_rate(parsed_domain, base_delay)
+        except Exception as e:
+            logger.debug("Domain rate limiting error for %s: %s", url, e)
+            # Fallback: original jittered sleep
+            jittered_delay = base_delay + random.uniform(0.3, 1.2)
+            await asyncio.sleep(jittered_delay)
 
         # 4. HTTP Fetch with realistic browser headers & HTTP/2
         headers = get_stealth_headers(url=url)
@@ -198,42 +262,38 @@ class CrawlerManager:
         max_retries = 2
         last_exception = None
 
+        # Use shared client if provided, otherwise create a per-request client
+        client_to_use = shared_client or await self._get_shared_client()
+
         for attempt in range(max_retries + 1):
             t0 = time.time()
             try:
-                async with httpx.AsyncClient(
-                    timeout=self.timeout,
-                    follow_redirects=True,
-                    headers=headers,
-                    http2=HAS_HTTP2,
-                    limits=httpx.Limits(max_connections=10, max_keepalive_connections=5),
-                ) as client:
-                    resp = await client.get(url)
-                    t_elapsed_ms = (time.time() - t0) * 1000
+                resp = await client_to_use.get(url, headers=headers)
+                t_elapsed_ms = (time.time() - t0) * 1000
 
-                    # Record rate limit metric
-                    await rate_limit_service.record_request_metric(
-                        url,
-                        status_code=resp.status_code,
-                        response_time_ms=t_elapsed_ms,
-                        headers=dict(resp.headers),
-                    )
+                # Record rate limit metric
+                await rate_limit_service.record_request_metric(
+                    url,
+                    status_code=resp.status_code,
+                    response_time_ms=t_elapsed_ms,
+                    headers=dict(resp.headers),
+                )
 
-                    # Handle 429 throttling
-                    if resp.status_code == 429 and attempt < max_retries:
-                        from app.services.rate_limit_service import HeaderAnalyzer
-                        retry_after = 3.0
-                        header_val = resp.headers.get("retry-after") or resp.headers.get("Retry-After")
-                        if header_val:
-                            parsed_sec = HeaderAnalyzer.parse_retry_after(header_val)
-                            if parsed_sec:
-                                retry_after = parsed_sec
-                        sleep_delay = min(retry_after + random.uniform(0.5, 1.5), 60.0)
-                        logger.warning("HTTP 429 for %s. Backing off for %.1fs (attempt %d/%d)", url, sleep_delay, attempt + 1, max_retries)
-                        await asyncio.sleep(sleep_delay)
-                        continue
+                # Handle 429 throttling
+                if resp.status_code == 429 and attempt < max_retries:
+                    from app.services.rate_limit_service import HeaderAnalyzer
+                    retry_after = 3.0
+                    header_val = resp.headers.get("retry-after") or resp.headers.get("Retry-After")
+                    if header_val:
+                        parsed_sec = HeaderAnalyzer.parse_retry_after(header_val)
+                        if parsed_sec:
+                            retry_after = parsed_sec
+                    sleep_delay = min(retry_after + random.uniform(0.5, 1.5), 60.0)
+                    logger.warning("HTTP 429 for %s. Backing off for %.1fs (attempt %d/%d)", url, sleep_delay, attempt + 1, max_retries)
+                    await asyncio.sleep(sleep_delay)
+                    continue
 
-                    break
+                break
             except httpx.TimeoutException as e:
                 t_elapsed_ms = (time.time() - t0) * 1000
                 await rate_limit_service.record_request_metric(
@@ -295,18 +355,35 @@ class CrawlerManager:
                 result["status"] = "skipped"
                 return result
 
-            # Canonical URL detection
+            # Canonical URL detection — offload BS4 parsing to thread pool
             try:
-                soup = BeautifulSoup(resp_text[:50000], "lxml")
-                canon_tag = soup.find("link", rel=lambda val: val and "canonical" in val.lower())
-                if canon_tag and canon_tag.get("href"):
-                    result["canonical_url"] = urljoin(final_url, canon_tag["href"].strip())
+                loop = asyncio.get_event_loop()
+                html_snippet = resp_text[:50000]
+
+                def _parse_canonical(html: str) -> Optional[str]:
+                    soup = BeautifulSoup(html, "lxml")
+                    canon_tag = soup.find("link", rel=lambda val: val and "canonical" in val.lower())
+                    if canon_tag and canon_tag.get("href"):
+                        return canon_tag["href"].strip()
+                    return None
+
+                canon_href = await loop.run_in_executor(_thread_pool, _parse_canonical, html_snippet)
+                if canon_href:
+                    result["canonical_url"] = urljoin(final_url, canon_href)
             except Exception:
                 pass
 
-            # Extract content
+            # Extract content — offload to thread pool (trafilatura / NLP is CPU-bound)
             try:
-                content = self.extractor.extract(resp_text, final_url)
+                loop = asyncio.get_event_loop()
+                _resp_text = resp_text
+                _final_url = final_url
+                extractor = self.extractor
+
+                def _sync_extract() -> Optional[Dict]:
+                    return extractor.extract(_resp_text, _final_url)
+
+                content = await loop.run_in_executor(_thread_pool, _sync_extract)
             except Exception as e:
                 logger.debug("Extraction error on %s: %s", url, e)
 
@@ -396,45 +473,60 @@ class CrawlerManager:
             result["error_type"] = "network_error"
         return result
 
-    async def _playwright_render(self, url: str) -> Optional[Dict]:
-        """Render using Playwright with anti-detection flags and stealth viewport."""
-        try:
+    async def _ensure_playwright_browser(self):
+        """Lazy-init Playwright browser and semaphore (reused across crawls)."""
+        if self._playwright is None:
             from playwright.async_api import async_playwright
-            if self._playwright is None:
-                self._playwright = await async_playwright().start()
-                self._playwright_browser = await self._playwright.chromium.launch(
-                    headless=True,
-                    args=[
-                        "--no-sandbox",
-                        "--disable-dev-shm-usage",
-                        "--disable-blink-features=AutomationControlled",
-                        "--disable-gpu",
-                    ],
-                )
-
-            headers = get_stealth_headers(url=url)
-            page = await self._playwright_browser.new_page(
-                user_agent=self.user_agent or headers["User-Agent"],
-                viewport={"width": 1920, "height": 1080},
-                extra_http_headers={"Accept-Language": "en-US,en;q=0.9"},
+            self._playwright = await async_playwright().start()
+            self._playwright_browser = await self._playwright.chromium.launch(
+                headless=True,
+                args=[
+                    "--no-sandbox",
+                    "--disable-dev-shm-usage",
+                    "--disable-blink-features=AutomationControlled",
+                    "--disable-gpu",
+                ],
             )
+        if self._playwright_semaphore is None:
+            self._playwright_semaphore = asyncio.Semaphore(2)
 
-            # Mask navigator.webdriver
-            await page.add_init_script("""
-                Object.defineProperty(navigator, 'webdriver', {
-                    get: () => undefined
-                });
-            """)
+    async def _playwright_render(self, url: str) -> Optional[Dict]:
+        """Render using Playwright with anti-detection flags, isolated context per page."""
+        try:
+            await self._ensure_playwright_browser()
 
-            try:
-                await page.goto(url, timeout=20000, wait_until="domcontentloaded")
-                await page.wait_for_timeout(1500)
-                html = await page.content()
-                title = await page.title()
-            finally:
-                await page.close()
+            async with self._playwright_semaphore:
+                headers = get_stealth_headers(url=url)
+                context = await self._playwright_browser.new_context(
+                    user_agent=self.user_agent or headers["User-Agent"],
+                    viewport={"width": 1920, "height": 1080},
+                    extra_http_headers={"Accept-Language": "en-US,en;q=0.9"},
+                )
+                try:
+                    page = await context.new_page()
 
-            content = self.extractor.extract(html, url)
+                    # Mask navigator.webdriver
+                    await page.add_init_script("""
+                        Object.defineProperty(navigator, 'webdriver', {
+                            get: () => undefined
+                        });
+                    """)
+
+                    await page.goto(url, timeout=20000, wait_until="domcontentloaded")
+                    await page.wait_for_timeout(1500)
+                    html = await page.content()
+                    title = await page.title()
+                finally:
+                    await context.close()
+
+            # Offload extraction to thread pool
+            loop = asyncio.get_event_loop()
+            extractor = self.extractor
+
+            def _sync_extract_pw():
+                return extractor.extract(html, url)
+
+            content = await loop.run_in_executor(_thread_pool, _sync_extract_pw)
             return {
                 "main_text": content.get("main_text", ""),
                 "raw_html": html,
@@ -482,7 +574,14 @@ class CrawlerManager:
 
             loop = asyncio.get_event_loop()
             html, title = await loop.run_in_executor(None, _sync_fetch)
-            content = self.extractor.extract(html, url)
+
+            # Offload extraction to thread pool
+            extractor = self.extractor
+
+            def _sync_extract_sel():
+                return extractor.extract(html, url)
+
+            content = await loop.run_in_executor(_thread_pool, _sync_extract_sel)
             return {
                 "main_text": content.get("main_text", ""),
                 "raw_html": html,
@@ -501,7 +600,7 @@ class CrawlerManager:
             return None
 
     # ------------------------------------------------------------------
-    # Batch crawl with cancellation check
+    # Batch crawl with cancellation check — now CONCURRENT
     # ------------------------------------------------------------------
     async def crawl_urls(
         self,
@@ -513,7 +612,6 @@ class CrawlerManager:
         progress_callback: Optional[Callable[[int, int], Awaitable[None]]] = None,
         max_pages: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
-        results: List[Dict[str, Any]] = []
         effective_max = max_pages if max_pages is not None else self.max_pages
         # Prioritize and filter valid crawlable content pages
         valid_urls = [u for u in urls if is_crawlable_content_url(u)]
@@ -521,12 +619,29 @@ class CrawlerManager:
         total = len(urls_to_crawl)
         cancel_check = is_cancelled_fn or cancellation_check
 
-        for index, target_url in enumerate(urls_to_crawl):
+        # Obtain the shared connection pool once for all concurrent requests in this batch
+        shared_client = await self._get_shared_client()
+
+        semaphore = asyncio.Semaphore(self.concurrency)
+        completed_count = 0
+        results_lock = asyncio.Lock()
+        results: List[Optional[Dict[str, Any]]] = [None] * total
+
+        async def crawl_one(index: int, target_url: str):
+            nonlocal completed_count
+
+            # Pre-crawl cancellation check
             if cancel_check:
                 try:
                     if await cancel_check():
                         logger.info("Cancellation detected before crawling %s", target_url)
-                        break
+                        results[index] = {
+                            "url": target_url,
+                            "status": "skipped",
+                            "error": "job_cancelled",
+                            "error_type": "cancelled",
+                        }
+                        return
                 except Exception as ex:
                     logger.warning("Error checking cancellation: %s", ex)
 
@@ -538,8 +653,13 @@ class CrawlerManager:
                     metadata={"page_index": index + 1, "total_pages": total}
                 )
 
-            page_res = await self.crawl_url(target_url)
-            results.append(page_res)
+            async with semaphore:
+                try:
+                    page_res = await self.crawl_url(target_url, shared_client=shared_client)
+                except TypeError:
+                    page_res = await self.crawl_url(target_url)
+
+            results[index] = page_res
 
             if db is not None and job_id:
                 st = page_res.get("status")
@@ -564,10 +684,41 @@ class CrawlerManager:
                     }
                 )
 
-            if progress_callback:
-                try:
-                    await progress_callback(index + 1, total)
-                except Exception as ex:
-                    logger.debug("Progress callback failed: %s", ex)
+            async with results_lock:
+                completed_count += 1
+                if progress_callback:
+                    try:
+                        await progress_callback(completed_count, total)
+                    except Exception as ex:
+                        logger.debug("Progress callback failed: %s", ex)
 
-        return results
+        # Launch all crawls concurrently (semaphore bounds actual parallelism)
+        gather_results = await asyncio.gather(
+            *[crawl_one(i, u) for i, u in enumerate(urls_to_crawl)],
+            return_exceptions=True,
+        )
+
+        # Handle any exceptions returned from gather (shouldn't happen with try/except inside, but be safe)
+        final_results: List[Dict[str, Any]] = []
+        for i, item in enumerate(gather_results):
+            if isinstance(item, BaseException):
+                logger.error("Unexpected exception crawling url[%d]: %s", i, item)
+                final_results.append({
+                    "url": urls_to_crawl[i] if i < len(urls_to_crawl) else "unknown",
+                    "status": "failed",
+                    "error": str(item)[:200],
+                    "error_type": "gather_exception",
+                })
+            elif results[i] is not None:
+                final_results.append(results[i])
+            else:
+                final_results.append({
+                    "url": urls_to_crawl[i] if i < len(urls_to_crawl) else "unknown",
+                    "status": "failed",
+                    "error": "no_result",
+                    "error_type": "internal",
+                })
+
+        if any(r.get("error") == "job_cancelled" for r in final_results):
+            return [r for r in final_results if r.get("error") != "job_cancelled"]
+        return final_results

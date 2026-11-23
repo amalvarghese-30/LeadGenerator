@@ -192,7 +192,7 @@ export const Settings: React.FC = () => {
           <ShieldCheck className="w-4 h-4 text-emerald-600" /> Compliance & Privacy Safeguards
         </h3>
         <p className="text-xs text-slate-600 leading-relaxed">
-          LeadIntel CRM operates under strict research compliance boundaries:
+          Candid Digital CRM operates under strict research compliance boundaries:
         </p>
         <ul className="list-disc list-inside text-xs text-slate-600 space-y-1">
           <li>Zero harvesting of private behind-login databases.</li>

@@ -7,17 +7,32 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     # App
-    APP_NAME: str = "LeadIntel CRM"
+    APP_NAME: str = "Candid Digital"
     APP_VERSION: str = "1.0.0"
     DEBUG: bool = False
     ENVIRONMENT: str = "development"
 
-    # MongoDB
+    # MongoDB (kept for existing usage)
     MONGODB_URL: str = "mongodb://localhost:27017"
     MONGODB_DB_NAME: str = "leadintel"
     MONGODB_MAX_POOL_SIZE: int = 50
     MONGODB_MIN_POOL_SIZE: int = 5
     MONGODB_SERVER_SELECTION_TIMEOUT_MS: int = 5000
+
+    # MySQL / SQLAlchemy
+    MYSQL_HOST: str = "localhost"
+    MYSQL_PORT: int = 3306
+    MYSQL_USER: str = "root"
+    MYSQL_PASSWORD: str = ""
+    MYSQL_DB: str = "candiddigital"
+    DATABASE_URL: str = "mysql+aiomysql://root:@localhost:3306/candiddigital"
+    DB_POOL_SIZE: int = 20
+    DB_MAX_OVERFLOW: int = 30
+    DB_POOL_RECYCLE: int = 3600
+
+    # Redis
+    REDIS_URL: str = "redis://localhost:6379/0"
+    REDIS_ENABLED: bool = False
 
     # JWT
     JWT_SECRET_KEY: str = "change-me-in-production-use-a-long-random-secret"
@@ -38,12 +53,14 @@ class Settings(BaseSettings):
     # Crawler settings
     CRAWLER_MAX_CONCURRENT: int = 5
     CRAWLER_REQUEST_TIMEOUT: int = 30
-    CRAWLER_USER_AGENT: str = "LeadIntelBot/1.0 (+https://leadintel.io/bot)"
+    CRAWLER_USER_AGENT: str = "CandidDigitalBot/1.0 (+https://candiddigital.in/)"
     CRAWLER_DELAY_SECONDS: float = 1.0
     CRAWLER_MAX_RETRIES: int = 3
     CRAWLER_MAX_PAGES_PER_JOB: int = 50
     CRAWLER_SAFETY_MAX_PAGES: int = 500
     CRAWLER_CONCURRENCY: int = 3
+    CRAWLER_THREAD_WORKERS: int = 8
+    CRAWLER_BROWSER_CONCURRENCY: int = 2
     PLAYWRIGHT_HEADLESS: bool = True
 
     # CORS

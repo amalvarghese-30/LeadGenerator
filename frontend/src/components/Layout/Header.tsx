@@ -3,6 +3,7 @@ import { useLocation, Link } from 'react-router-dom';
 import { useAuth } from '../../hooks/useAuth';
 import { LogOut, User as UserIcon, Shield, Menu, ChevronRight, Settings } from 'lucide-react';
 import { Button } from '../ui/Button';
+import { BrandLogo } from '../ui/BrandLogo';
 
 interface HeaderProps {
   onMenuToggle?: () => void;
@@ -49,8 +50,9 @@ export const Header: React.FC<HeaderProps> = ({ onMenuToggle, title }) => {
 
         {/* Dynamic Breadcrumbs */}
         <div className="flex items-center gap-2 text-xs font-semibold text-slate-400">
-          <Link to="/dashboard" className="hover:text-slate-700 transition-colors">
-            LeadIntel
+          <Link to="/dashboard" className="hover:text-slate-700 transition-colors flex items-center">
+            <BrandLogo mode="icon" className="md:hidden" />
+            <span className="hidden md:inline">Candid Digital</span>
           </Link>
           <ChevronRight className="w-3.5 h-3.5 text-slate-300" />
           <span className="text-slate-800 font-bold">{title || currentLabel}</span>

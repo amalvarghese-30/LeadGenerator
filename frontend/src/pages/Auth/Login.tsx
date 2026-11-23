@@ -2,14 +2,15 @@ import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../hooks/useAuth';
 import { login } from '../../services/auth';
-import { ShieldCheck, ArrowRight, Lock, Mail } from 'lucide-react';
+import { ArrowRight, Lock, Mail } from 'lucide-react';
 import { Input } from '../../components/ui/Input';
 import { Button } from '../../components/ui/Button';
+import { BrandLogo } from '../../components/ui/BrandLogo';
 
 export const Login: React.FC = () => {
   const navigate = useNavigate();
   const { loginUser } = useAuth();
-  const [email, setEmail] = useState('admin@leadintel.local');
+  const [email, setEmail] = useState('admin@candiddigital.in');
   const [password, setPassword] = useState('Admin@123456');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -32,7 +33,7 @@ export const Login: React.FC = () => {
           id: 'user_active',
           email,
           username: email.split('@')[0],
-          full_name: 'LeadIntel User',
+          full_name: 'Candid Digital User',
           role: 'admin' as const,
           is_active: true,
         };
@@ -50,14 +51,11 @@ export const Login: React.FC = () => {
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-950 flex flex-col justify-center py-12 sm:px-6 lg:px-8">
       <div className="sm:mx-auto sm:w-full sm:max-w-md text-center">
-        <div className="inline-flex w-14 h-14 rounded-2xl bg-gradient-to-tr from-blue-600 to-indigo-500 items-center justify-center text-white shadow-xl shadow-blue-500/20 mb-4">
-          <ShieldCheck className="w-8 h-8 stroke-[2.2]" />
+        <div className="flex justify-center mb-4">
+          <BrandLogo mode="full" className="[&>div>span:first-child]:!text-white [&>div>span:last-child]:!text-sky-400" />
         </div>
-        <h2 className="text-2xl font-bold tracking-tight text-white font-sans">
-          LeadIntel CRM
-        </h2>
         <p className="mt-1 text-xs text-slate-400">
-          Provider Intelligence & CRM Lead Discovery Platform
+          Provider Intelligence &amp; CRM Lead Discovery Platform
         </p>
       </div>
 
@@ -76,7 +74,7 @@ export const Login: React.FC = () => {
               required
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              placeholder="admin@leadintel.io"
+              placeholder="admin@candiddigital.in"
               leftIcon={<Mail className="w-4 h-4 text-slate-400" />}
             />
 

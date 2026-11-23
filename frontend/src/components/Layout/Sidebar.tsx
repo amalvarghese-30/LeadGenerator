@@ -17,10 +17,10 @@ import {
   Settings,
   ChevronLeft,
   ChevronRight,
-  ShieldCheck,
   Sparkles,
 } from 'lucide-react';
 import { cn } from '../../utils/cn';
+import { BrandLogo } from '../ui/BrandLogo';
 
 interface SidebarProps {
   collapsed: boolean;
@@ -81,14 +81,10 @@ export const Sidebar: React.FC<SidebarProps> = ({ collapsed, onToggle }) => {
       {/* Brand Header */}
       <div className="h-16 flex items-center justify-between px-4 border-b border-slate-100">
         <div className="flex items-center gap-2.5 overflow-hidden">
-          <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-blue-700 to-indigo-600 flex items-center justify-center text-white font-bold shadow-md shadow-blue-500/20 shrink-0">
-            <ShieldCheck className="w-5 h-5 stroke-[2.2]" />
-          </div>
-          {!collapsed && (
-            <div className="truncate">
-              <h1 className="text-sm font-bold tracking-tight text-slate-900 leading-none">LeadIntel</h1>
-              <span className="text-[10px] font-semibold text-blue-600 tracking-wider uppercase">CRM Platform</span>
-            </div>
+          {collapsed ? (
+            <BrandLogo mode="icon" />
+          ) : (
+            <BrandLogo mode="full" />
           )}
         </div>
       </div>

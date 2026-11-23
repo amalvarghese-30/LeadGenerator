@@ -68,6 +68,7 @@ frontend/dist-ssr/
 *.sw?
 
 # OS generated
+*.log
 .DS_Store
 .DS_Store?
 ._*

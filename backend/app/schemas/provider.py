@@ -64,6 +64,16 @@ class ProviderResponse(BaseModel):
     tags: List[str] = []
     notes: Optional[str] = None
     crawl_job_id: Optional[str] = None
+    # Scan Aggregation Metrics
+    total_scans_count: int = 0
+    latest_job_id: Optional[str] = None
+    latest_job_status: Optional[str] = None
+    latest_job_progress_pct: Optional[int] = None
+    pages_crawled: int = 0
+    references_found: int = 0
+    companies_found: int = 0
+    contacts_found: int = 0
+    leads_found: int = 0
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
 

@@ -8,8 +8,20 @@ export const getProviders = async (params: {
   category?: string;
   country?: string;
   verification_status?: string;
+  scanned_only?: boolean;
+  scan_status?: string;
+  sort_by?: string;
+  order?: string;
 }): Promise<PaginatedResponse<Provider>> => {
   const res = await api.get<PaginatedResponse<Provider>>('/providers', { params });
+  return res.data;
+};
+
+export const getProviderScans = async (
+  providerId: string,
+  params?: { page?: number; page_size?: number }
+): Promise<PaginatedResponse<CrawlJob>> => {
+  const res = await api.get<PaginatedResponse<CrawlJob>>(`/providers/${providerId}/scans`, { params });
   return res.data;
 };
 

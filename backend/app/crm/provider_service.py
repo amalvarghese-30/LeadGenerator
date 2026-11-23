@@ -51,23 +51,126 @@ async def list_providers(
     country: Optional[str] = None,
     verification_status: Optional[str] = None,
     discovery_status: Optional[str] = None,
-    sort_by: str = "created_at",
+    scanned_only: Optional[bool] = None,
+    scan_status: Optional[str] = "all",
+    sort_by: str = "last_crawled_at",
     sort_dir: int = -1,
 ) -> Tuple[List[Dict], int]:
-    query: Dict[str, Any] = {}
+    match_stage: Dict[str, Any] = {}
     if search:
-        query["$text"] = {"$search": search}
+        match_stage["$or"] = [
+            {"name": {"$regex": search, "$options": "i"}},
+            {"domain": {"$regex": search, "$options": "i"}},
+            {"website": {"$regex": search, "$options": "i"}},
+        ]
     if category:
-        query["category"] = category
+        match_stage["category"] = category
     if country:
-        query["country"] = country
+        match_stage["country"] = country
     if verification_status:
-        query["verification_status"] = verification_status
+        match_stage["verification_status"] = verification_status
     if discovery_status:
-        query["discovery_status"] = discovery_status
+        match_stage["discovery_status"] = discovery_status
 
-    total = await db.providers.count_documents(query)
-    cursor = db.providers.find(query).sort(sort_by, sort_dir).skip(skip).limit(limit)
+    pipeline: List[Dict[str, Any]] = []
+    if match_stage:
+        pipeline.append({"$match": match_stage})
+
+    # Join crawl_jobs
+    pipeline.extend([
+        {
+            "$lookup": {
+                "from": "crawl_jobs",
+                "let": {"pid": "$_id"},
+                "pipeline": [
+                    {"$match": {"$expr": {"$eq": ["$provider_id", "$$pid"]}}},
+                    {"$sort": {"created_at": -1}},
+                ],
+                "as": "scan_jobs",
+            }
+        },
+        {
+            "$addFields": {
+                "total_scans_count": {"$size": "$scan_jobs"},
+                "latest_job": {"$arrayElemAt": ["$scan_jobs", 0]},
+                "last_crawled_at": {
+                    "$ifNull": [
+                        {"$max": "$scan_jobs.created_at"},
+                        "$last_crawled_at",
+                    ]
+                },
+                "pages_crawled": {"$ifNull": [{"$sum": "$scan_jobs.pages_crawled"}, 0]},
+                "references_found": {"$ifNull": [{"$sum": "$scan_jobs.references_found"}, 0]},
+                "companies_found": {"$ifNull": [{"$sum": "$scan_jobs.companies_created"}, 0]},
+                "contacts_found": {"$ifNull": [{"$sum": "$scan_jobs.contacts_created"}, 0]},
+                "leads_found": {"$ifNull": [{"$sum": "$scan_jobs.leads_created"}, 0]},
+            }
+        },
+        {
+            "$addFields": {
+                "latest_job_id": {
+                    "$cond": [{"$ifNull": ["$latest_job._id", False]}, {"$toString": "$latest_job._id"}, None]
+                },
+                "latest_job_status": "$latest_job.status",
+                "latest_job_progress_pct": "$latest_job.progress_pct",
+            }
+        },
+    ])
+
+    # Apply scanned_only and scan_status filters
+    post_match: Dict[str, Any] = {}
+    if scanned_only or scan_status == "scanned":
+        post_match["$or"] = [{"total_scans_count": {"$gt": 0}}, {"last_crawled_at": {"$ne": None}}]
+    elif scan_status == "researching":
+        post_match["latest_job_status"] = "running"
+    elif scan_status == "completed":
+        post_match["latest_job_status"] = {"$in": ["completed", "completed_with_warnings"]}
+    elif scan_status == "failed":
+        post_match["latest_job_status"] = "failed"
+    elif scan_status == "never_scanned":
+        post_match["total_scans_count"] = 0
+
+    if post_match:
+        pipeline.append({"$match": post_match})
+
+    # Count facet and data facet
+    pipeline.append({
+        "$facet": {
+            "metadata": [{"$count": "total"}],
+            "data": [
+                {"$sort": {sort_by: sort_dir, "created_at": -1}},
+                {"$skip": skip},
+                {"$limit": limit},
+                {"$project": {"scan_jobs": 0, "latest_job": 0}},
+            ],
+        }
+    })
+
+    result = await db.providers.aggregate(pipeline).to_list(length=1)
+    if not result:
+        return [], 0
+
+    facet_result = result[0]
+    total_docs = facet_result.get("metadata", [])
+    total = total_docs[0]["total"] if total_docs else 0
+    items = [_doc_to_dict(d) for d in facet_result.get("data", [])]
+    return items, total
+
+
+async def list_provider_scans(
+    db: AsyncIOMotorDatabase,
+    provider_id: str,
+    skip: int = 0,
+    limit: int = 20,
+) -> Tuple[List[Dict], int]:
+    try:
+        oid = ObjectId(provider_id)
+        query = {"$or": [{"provider_id": oid}, {"provider_id": provider_id}]}
+    except Exception:
+        query = {"provider_id": provider_id}
+
+    total = await db.crawl_jobs.count_documents(query)
+    cursor = db.crawl_jobs.find(query).sort("created_at", -1).skip(skip).limit(limit)
     docs = await cursor.to_list(length=limit)
     return [_doc_to_dict(d) for d in docs], total
 

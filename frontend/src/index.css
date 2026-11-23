@@ -1,4 +1,6 @@
 @import "tailwindcss";
+@import 'datatables.net-dt/css/dataTables.dataTables.css';
+@import 'datatables.net-responsive-dt/css/responsive.dataTables.css';
 
 @layer base {
   body {
@@ -20,4 +22,68 @@
 }
 ::-webkit-scrollbar-thumb:hover {
   background: #475569;
+}
+
+/* DataTables.net Theme Styling — Candid Digital */
+div.dataTables_wrapper {
+  width: 100%;
+}
+div.dataTables_wrapper div.dataTables_length label,
+div.dataTables_wrapper div.dataTables_filter label {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #64748b;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+div.dataTables_wrapper div.dataTables_length select {
+  border: 1px solid #cbd5e1;
+  border-radius: 0.5rem;
+  padding: 0.35rem 0.75rem;
+  font-size: 0.75rem;
+  background-color: #f8fafc;
+  color: #1e293b;
+  outline: none;
+}
+div.dataTables_wrapper div.dataTables_filter input {
+  border: 1px solid #cbd5e1;
+  border-radius: 0.5rem;
+  padding: 0.35rem 0.75rem;
+  font-size: 0.75rem;
+  background-color: #f8fafc;
+  color: #1e293b;
+  outline: none;
+  min-width: 200px;
+}
+div.dataTables_wrapper div.dataTables_info {
+  font-size: 0.75rem;
+  color: #64748b;
+  font-weight: 500;
+  padding-top: 0 !important;
+}
+div.dataTables_wrapper div.dataTables_paginate {
+  font-size: 0.75rem;
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding-top: 0 !important;
+}
+table.dataTable thead th {
+  background-color: #f8fafc;
+  color: #475569;
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 0.75rem 1rem !important;
+  border-bottom: 1px solid #e2e8f0 !important;
+}
+table.dataTable tbody td {
+  padding: 0.75rem 1rem !important;
+  border-bottom: 1px solid #f1f5f9 !important;
+  color: #1e293b;
+}
+table.dataTable tbody tr:hover {
+  background-color: #f8fafc !important;
 }

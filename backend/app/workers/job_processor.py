@@ -73,6 +73,12 @@ class JobProcessor:
     async def is_job_cancelled(self, db, job_id: str) -> bool:
         """Actively checks if the job status in database has been marked cancelled."""
         try:
+            from app.database.redis_client import check_cancel_flag
+            if await check_cancel_flag(job_id):
+                return True
+        except Exception:
+            pass
+        try:
             job = await db.crawl_jobs.find_one({"_id": ObjectId(job_id)}, {"status": 1})
             return bool(job and job.get("status") == "cancelled")
         except Exception:
@@ -324,8 +330,8 @@ class JobProcessor:
                     "http_status": page.get("http_status"),
                     "public_emails": page.get("public_emails", []),
                     "social_profiles": page.get("social_profiles", []),
-                    "main_text": (page.get("main_text") or "")[:20000],
-                    "raw_html": (page.get("raw_html") or "")[:500000],
+                    "main_text": (page.get("main_text") or "")[:5000],
+                    "raw_html": None,  # Omitting bulky HTML to preserve MongoDB Atlas M0 quota (<512MB)
                     "crawled_at": datetime.now(timezone.utc),
                 }
                 insert_res = db.crawl_pages.insert_one(doc)

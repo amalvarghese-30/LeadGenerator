@@ -29,6 +29,15 @@ export interface Provider {
   verification_status: 'unverified' | 'verified' | 'rejected';
   last_crawled_at?: string;
   crawl_job_id?: string;
+  total_scans_count?: number;
+  latest_job_id?: string;
+  latest_job_status?: string;
+  latest_job_progress_pct?: number;
+  pages_crawled?: number;
+  references_found?: number;
+  companies_found?: number;
+  contacts_found?: number;
+  leads_found?: number;
   source?: string;
   created_at: string;
   updated_at: string;

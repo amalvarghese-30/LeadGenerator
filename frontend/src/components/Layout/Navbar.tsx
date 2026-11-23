@@ -4,6 +4,7 @@ import {
   Radar,
   Users,
   Gauge,
+  Building2,
   Settings,
   LogOut,
   Sparkles,
@@ -34,6 +35,12 @@ export const Navbar: React.FC = () => {
       icon: Users,
     },
     {
+      to: '/providers',
+      label: 'Scanned Providers',
+      sublabel: 'Audit & History',
+      icon: Building2,
+    },
+    {
       to: '/rate-limits',
       label: 'Rate Limits',
       sublabel: 'Adaptive Pacing Engine',
@@ -54,7 +61,7 @@ export const Navbar: React.FC = () => {
               <div className="flex flex-col">
                 <div className="flex items-center gap-2">
                   <span className="font-extrabold text-lg tracking-tight text-white group-hover:text-cyan-400 transition-colors">
-                    LeadIntel
+                    Candid Digital
                   </span>
                   <span className="px-1.5 py-0.5 rounded text-[10px] font-mono uppercase font-bold bg-cyan-950 text-cyan-400 border border-cyan-800">
                     Pro
@@ -110,7 +117,7 @@ export const Navbar: React.FC = () => {
                   {user?.full_name || 'Admin'}
                 </span>
                 <span className="text-[10px] font-mono text-slate-400 truncate max-w-[140px]">
-                  {user?.email || 'admin@leadintel.local'}
+                  {user?.email || 'admin@candiddigital.in'}
                 </span>
               </div>
 

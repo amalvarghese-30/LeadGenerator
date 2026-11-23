@@ -27,7 +27,7 @@ from app.utils.url_utils import extract_domain
 
 logger = logging.getLogger(__name__)
 
-USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36 LeadIntelCrawler/1.0"
+USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36 CandidDigitalCrawler/1.0"
 
 
 class ContactEnrichmentService:

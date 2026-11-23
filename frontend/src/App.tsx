@@ -8,6 +8,8 @@ import { Scanner } from './pages/Scanner';
 import { Directory } from './pages/Directory';
 import { RateLimitChecker } from './pages/RateLimitChecker';
 import { Settings } from './pages/Settings';
+import { Providers } from './pages/Providers';
+import { ProviderDetail } from './pages/Providers/ProviderDetail';
 import { LoadingSpinner } from './components/ui/LoadingSpinner';
 
 const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -45,7 +47,11 @@ export const App: React.FC = () => {
               {/* Core Workspace 2: Client & Contact Directory */}
               <Route path="directory" element={<Directory />} />
 
-              {/* Core Workspace 3: Rate Limit Profiler */}
+              {/* Core Workspace 3: Scanned Providers */}
+              <Route path="providers" element={<Providers />} />
+              <Route path="providers/:id" element={<ProviderDetail />} />
+
+              {/* Core Workspace 4: Rate Limit Profiler */}
               <Route path="rate-limits" element={<RateLimitChecker />} />
 
               {/* Settings */}
