@@ -1,14 +1,13 @@
 import React from 'react';
 import { NavLink, Link, useNavigate } from 'react-router-dom';
 import {
+  LayoutDashboard,
   Radar,
   Users,
-  Gauge,
   Building2,
   Settings,
   LogOut,
   Sparkles,
-  ShieldCheck,
 } from 'lucide-react';
 import { useAuth } from '../../hooks/useAuth';
 
@@ -24,6 +23,12 @@ export const Navbar: React.FC = () => {
   const navLinks = [
     {
       to: '/',
+      label: 'Dashboard',
+      sublabel: 'Command Center & Live Monitor',
+      icon: LayoutDashboard,
+    },
+    {
+      to: '/scanner',
       label: 'Scanner',
       sublabel: 'Competitor Client Finder',
       icon: Radar,
@@ -39,12 +44,6 @@ export const Navbar: React.FC = () => {
       label: 'Scanned Providers',
       sublabel: 'Audit & History',
       icon: Building2,
-    },
-    {
-      to: '/rate-limits',
-      label: 'Rate Limits',
-      sublabel: 'Adaptive Pacing Engine',
-      icon: Gauge,
     },
   ];
 

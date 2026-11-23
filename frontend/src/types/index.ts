@@ -249,27 +249,31 @@ export interface Task {
 export interface CrawlJob {
   id: string;
   provider_id: string;
+  provider_name?: string;
+  _id?: string;
   starting_url: string;
   status:
-  | 'pending'
-  | 'running'
-  | 'completed'
-  | 'completed_with_warnings'
-  | 'failed'
-  | 'cancelled'
-  | 'paused';
+    | 'pending'
+    | 'running'
+    | 'completed'
+    | 'completed_with_warnings'
+    | 'failed'
+    | 'cancelled'
+    | 'paused';
   current_stage:
-  | 'queued'
-  | 'discovering'
-  | 'crawling'
-  | 'extracting'
-  | 'verifying'
-  | 'creating_crm_records'
-  | 'enriching_contacts'
-  | 'generating_report'
-  | 'completed'
-  | 'failed'
-  | 'cancelled';
+    | 'queued'
+    | 'discovering'
+    | 'crawling'
+    | 'extracting'
+    | 'verifying'
+    | 'creating_crm_records'
+    | 'enriching_contacts'
+    | 'enriching_companies'
+    | 'generating_report'
+    | 'completed'
+    | 'failed'
+    | 'cancelled'
+    | (string & {});
   progress_pct: number;
 
   pages_discovered: number;
@@ -307,6 +311,7 @@ export interface CrawlJob {
 
   created_at: string;
   started_at?: string;
+  updated_at?: string;
   completed_at?: string;
 }
 
@@ -458,48 +463,6 @@ export interface RateLimitMetric {
   rate_limit_headers?: Record<string, string>;
   error_type?: string;
   action_taken?: string;
-}
-
-export interface DomainRateLimit {
-  id?: string;
-  domain: string;
-  total_requests?: number;
-  requests?: number;
-  successful_requests?: number;
-  success?: number;
-  blocked_requests?: number;
-  throttled_429?: number;
-  forbidden_403?: number;
-  errors?: number;
-  error_rate_pct?: number;
-  blocking_percentage?: number;
-  average_response_time?: number;
-  avg_response_time_ms?: number;
-  active_interval_ms?: number;
-  estimated_interval_ms?: number;
-  configured_delay_seconds?: number;
-  active_concurrency?: number;
-  concurrency?: number;
-  confidence?: string;
-  status?: string;
-  is_paused?: boolean;
-  cooldown_until?: string;
-  last_throttled_at?: string;
-  last_retry_after?: number;
-}
-
-export interface RateLimitSummary {
-  total_requests: number;
-  successful_requests: number;
-  throttled_429_count: number;
-  forbidden_403_count: number;
-  other_error_count: number;
-  error_percentage: number;
-  blocking_percentage?: number;
-  average_response_time_ms: number;
-  active_monitored_domains: number;
-  paused_domains?: number;
-  recent_events: any[];
 }
 
 export interface SearchResultCandidate {

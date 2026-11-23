@@ -12,7 +12,6 @@ import {
   Briefcase,
   Globe,
   Radar,
-  Gauge,
   Activity,
   Layers,
   ChevronRight,
@@ -31,12 +30,12 @@ import {
 } from 'recharts';
 import { getDashboardStats, getLeadsReports, getProviderReports } from '../../services/reports';
 import { getCrawlJobs } from '../../services/discovery';
-import { getRateLimitMetrics } from '../../services/rateLimits';
-import { DashboardStats, CrawlJob, RateLimitSummary } from '../../types';
+import { DashboardStats, CrawlJob } from '../../types';
 import { Card } from '../../components/ui/Card';
 import { Button } from '../../components/ui/Button';
 import { Badge } from '../../components/ui/Badge';
 import { LoadingSpinner } from '../../components/ui/LoadingSpinner';
+import { CurrentScanMonitor } from '../../components/Dashboard/CurrentScanMonitor';
 
 const COLORS = ['#2563eb', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#64748b'];
 
@@ -45,24 +44,21 @@ export const Dashboard: React.FC = () => {
   const [leadsReport, setLeadsReport] = useState<any>(null);
   const [providerReport, setProviderReport] = useState<any>(null);
   const [recentJobs, setRecentJobs] = useState<CrawlJob[]>([]);
-  const [rateLimitSummary, setRateLimitSummary] = useState<RateLimitSummary | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
     const fetchData = async () => {
       try {
-        const [dashRes, leadsRes, provRes, jobsRes, rateRes] = await Promise.all([
+        const [dashRes, leadsRes, provRes, jobsRes] = await Promise.all([
           getDashboardStats().catch(() => null),
           getLeadsReports().catch(() => null),
           getProviderReports().catch(() => null),
           getCrawlJobs({ page: 1, page_size: 5 }).catch(() => null),
-          getRateLimitMetrics().catch(() => null),
         ]);
         if (dashRes) setStats(dashRes);
         if (leadsRes) setLeadsReport(leadsRes);
         if (provRes) setProviderReport(provRes);
         if (jobsRes) setRecentJobs(jobsRes.items || []);
-        if (rateRes) setRateLimitSummary(rateRes);
       } finally {
         setIsLoading(false);
       }
@@ -119,7 +115,7 @@ export const Dashboard: React.FC = () => {
               Launch Lead Generator
             </Button>
           </Link>
-          <Link to="/website-intelligence">
+          <Link to="/scanner">
             <Button variant="secondary" size="sm">
               <Globe className="w-3.5 h-3.5 mr-1.5" />
               Scan Website
@@ -127,6 +123,9 @@ export const Dashboard: React.FC = () => {
           </Link>
         </div>
       </div>
+
+      {/* Prominent Live Scan Monitor */}
+      <CurrentScanMonitor />
 
       {/* Top Level Metric Cards */}
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3.5">
@@ -161,12 +160,12 @@ export const Dashboard: React.FC = () => {
         </Card>
 
         <Card className="p-4 border-l-4 border-l-sky-600">
-          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Crawler Health</span>
+          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Queue & Discovery</span>
           <p className="text-xl font-black text-sky-600 mt-1">
-            {rateLimitSummary ? `${rateLimitSummary.total_requests} reqs` : '100%'}
+            {displayStats.pending_crawl_jobs ?? 0}
           </p>
           <span className="text-[10px] text-sky-700 mt-0.5 block">
-            {rateLimitSummary ? `${rateLimitSummary.throttled_429_count} throttled` : 'Zero errors'}
+            Pending research jobs
           </span>
         </Card>
       </div>
@@ -211,7 +210,7 @@ export const Dashboard: React.FC = () => {
             </Card>
           </Link>
 
-          <Link to="/competitor-intelligence" className="group">
+          <Link to="/scanner" className="group">
             <Card className="p-4 h-full border border-slate-200/80 hover:border-purple-400 hover:shadow-md transition-all">
               <div className="flex items-center justify-between mb-2">
                 <div className="w-8 h-8 rounded-xl bg-purple-50 text-purple-600 flex items-center justify-center">
@@ -228,19 +227,19 @@ export const Dashboard: React.FC = () => {
             </Card>
           </Link>
 
-          <Link to="/rate-limit-checker" className="group">
+          <Link to="/providers" className="group">
             <Card className="p-4 h-full border border-slate-200/80 hover:border-emerald-400 hover:shadow-md transition-all">
               <div className="flex items-center justify-between mb-2">
                 <div className="w-8 h-8 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center">
-                  <Gauge className="w-4 h-4" />
+                  <Building2 className="w-4 h-4" />
                 </div>
                 <ArrowUpRight className="w-4 h-4 text-slate-400 group-hover:text-emerald-600 transition-colors" />
               </div>
               <h3 className="text-xs font-bold text-slate-900 group-hover:text-emerald-600 transition-colors">
-                Rate Limit Checker
+                Scanned Providers
               </h3>
               <p className="text-[11px] text-slate-500 mt-1 leading-relaxed">
-                Telemetry for HTTP 429 throttling, response latency, and adaptive crawl delays.
+                Audit crawled provider domains, verify discovery status, and review extracted metrics.
               </p>
             </Card>
           </Link>

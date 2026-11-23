@@ -1,5 +1,5 @@
 import api from './api';
-import { CrawlJob, PaginatedResponse } from '../types';
+import { CrawlJob, JobEvent, PaginatedResponse } from '../types';
 
 export interface SearchProviderResult {
   title: string;
@@ -102,8 +102,11 @@ export const retryCrawlJob = async (id: string): Promise<void> => {
   await api.post(`/discovery/jobs/${id}/retry`);
 };
 
-export const getJobEvents = async (id: string, params?: { since_id?: string; limit?: number }) => {
-  const res = await api.get(`/discovery/jobs/${id}/events`, { params });
+export const getJobEvents = async (
+  id: string,
+  params?: { since_id?: string; limit?: number; latest?: boolean }
+): Promise<JobEvent[]> => {
+  const res = await api.get<JobEvent[]>(`/discovery/jobs/${id}/events`, { params });
   return res.data;
 };
 

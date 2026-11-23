@@ -2,13 +2,11 @@ import React from 'react';
 import { NavLink } from 'react-router-dom';
 import {
   LayoutDashboard,
-  Search,
   UserSearch,
   Building,
   UserCheck,
   Globe,
   Radar,
-  Gauge,
   Users,
   Briefcase,
   Building2,
@@ -49,7 +47,6 @@ export const Sidebar: React.FC<SidebarProps> = ({ collapsed, onToggle }) => {
       items: [
         { label: 'Website Intelligence', to: '/website-intelligence', icon: Globe },
         { label: 'Competitor Intelligence', to: '/competitor-intelligence', icon: Radar },
-        { label: 'Rate Limit Checker', to: '/rate-limit-checker', icon: Gauge },
         { label: 'Providers', to: '/providers', icon: Building2 },
       ],
     },

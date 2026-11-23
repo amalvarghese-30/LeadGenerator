@@ -1,12 +1,15 @@
 import React from 'react';
-import DataTable, { type DataTableProps } from 'datatables.net-react';
+import DataTable from 'datatables.net-react';
 import DT from 'datatables.net-dt';
 import 'datatables.net-responsive-dt';
 import 'datatables.net-buttons-dt';
 import { cn } from '../../utils/cn';
 
 // Register core DataTables styling & responsive extension
-DataTable.use(DT);
+const registerPlugin = (DataTable as any).use;
+if (typeof registerPlugin === 'function') {
+  registerPlugin.call(DataTable, DT);
+}
 
 export interface AppDataTableProps<T = any> {
   columns: any[];

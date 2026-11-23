@@ -18,7 +18,6 @@ const ROUTE_LABELS: Record<string, string> = {
   'auto-profile-creator': 'Auto Profile Creator',
   'website-intelligence': 'Website Intelligence',
   'competitor-intelligence': 'Competitor Intelligence',
-  'rate-limit-checker': 'Rate Limit Checker',
   leads: 'Leads',
   companies: 'Companies',
   contacts: 'Contacts',

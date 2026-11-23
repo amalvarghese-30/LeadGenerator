@@ -335,14 +335,22 @@ async def get_job_events_route(
     job_id: str,
     since_id: Optional[str] = Query(None),
     limit: int = Query(500, ge=1, le=2000),
+    latest: bool = Query(False),
     db: AsyncIOMotorDatabase = Depends(get_db),
     _user: dict = Depends(get_current_user),
 ):
-    """Retrieve historical persistent events for a research job with cursor support."""
+    """Retrieve historical persistent events for a research job with cursor support and optional latest-first mode."""
     query: Dict[str, Any] = {"job_id": job_id}
     if since_id and ObjectId.is_valid(since_id):
         query["_id"] = {"$gt": ObjectId(since_id)}
-    docs = await db.job_events.find(query).sort("_id", 1).to_list(limit)
+        docs = await db.job_events.find(query).sort("_id", 1).to_list(limit)
+    elif latest:
+        # Retrieve the newest events first using descending _id order,
+        # then reverse them before returning so chronological order is maintained.
+        docs = await db.job_events.find(query).sort("_id", -1).to_list(limit)
+        docs.reverse()
+    else:
+        docs = await db.job_events.find(query).sort("_id", 1).to_list(limit)
     return [_fmt_event(d) for d in docs]
 
 
