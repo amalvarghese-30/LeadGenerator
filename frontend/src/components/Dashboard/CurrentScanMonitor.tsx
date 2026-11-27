@@ -194,31 +194,31 @@ export const CurrentScanMonitor: React.FC = () => {
   return (
     <div className="space-y-4">
       {/* Section Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 pb-1 border-b border-slate-200/60">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 pb-1 border-b border-slate-800">
         <div className="flex items-center gap-2.5">
-          <div className="w-8 h-8 rounded-lg bg-sky-50 text-sky-600 flex items-center justify-center">
+          <div className="w-8 h-8 rounded-lg bg-cyan-950/80 text-cyan-400 border border-cyan-800/60 flex items-center justify-center">
             <Activity className="w-4 h-4" />
           </div>
           <div>
-            <div className="flex items-center gap-2">
-              <h2 className="text-base font-bold text-slate-900 tracking-tight">Current Scan Activity</h2>
+            <div className="flex items-center gap-2 flex-wrap">
+              <h2 className="text-base font-bold text-white tracking-tight">Current Scan Activity</h2>
               {runningJobs.length > 0 ? (
-                <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-950/80 text-emerald-400 border border-emerald-800">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
                   {runningJobs.length} {runningJobs.length === 1 ? 'Scan Active' : 'Scans Active'}
                 </span>
               ) : pendingTotal > 0 ? (
-                <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-amber-50 text-amber-700 border border-amber-200">
+                <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-amber-950/80 text-amber-400 border border-amber-800">
                   <Clock className="w-3 h-3" />
                   {pendingTotal} Queued
                 </span>
               ) : (
-                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-slate-100 text-slate-600">
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-slate-800 text-slate-400 border border-slate-700">
                   Idle
                 </span>
               )}
             </div>
-            <p className="text-xs text-slate-500">
+            <p className="text-xs text-slate-400">
               Live monitoring of competitor research and background discovery jobs.
             </p>
           </div>
@@ -228,10 +228,10 @@ export const CurrentScanMonitor: React.FC = () => {
           <button
             onClick={() => pollScanActivity(true)}
             disabled={isRefreshing}
-            className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium text-slate-600 bg-white hover:bg-slate-50 border border-slate-200 rounded-md shadow-xs transition-colors disabled:opacity-50"
+            className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium text-slate-300 bg-slate-900 hover:bg-slate-800 border border-slate-800 rounded-md shadow-xs transition-colors disabled:opacity-50"
             title="Refresh scan monitor"
           >
-            <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin text-sky-600' : ''}`} />
+            <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin text-cyan-400' : ''}`} />
             <span>{isRefreshing ? 'Updating...' : 'Live (4s)'}</span>
           </button>
         </div>
@@ -239,14 +239,14 @@ export const CurrentScanMonitor: React.FC = () => {
 
       {/* Non-blocking error notification */}
       {error && (
-        <div className="flex items-center justify-between p-3 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-xs">
+        <div className="flex items-center justify-between p-3 rounded-lg bg-amber-950/40 border border-amber-800/60 text-amber-300 text-xs">
           <div className="flex items-center gap-2">
-            <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+            <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
             <span>{error}</span>
           </div>
           <button
             onClick={() => pollScanActivity(true)}
-            className="font-semibold underline hover:text-amber-950"
+            className="font-semibold underline hover:text-amber-200"
           >
             Retry
           </button>
@@ -276,12 +276,12 @@ export const CurrentScanMonitor: React.FC = () => {
             return (
               <Card
                 key={jid}
-                className="overflow-hidden border border-slate-200/90 shadow-sm transition-all"
+                className="overflow-hidden border border-slate-800 bg-slate-900 shadow-md transition-all"
               >
                 {/* Accent Progress Line */}
-                <div className="h-1 w-full bg-slate-100">
+                <div className="h-1 w-full bg-slate-800">
                   <div
-                    className="h-full bg-gradient-to-r from-sky-500 to-indigo-600 transition-all duration-500 ease-out"
+                    className="h-full bg-gradient-to-r from-cyan-500 to-blue-600 transition-all duration-500 ease-out"
                     style={{ width: `${Math.min(100, Math.max(2, job.progress_pct || 0))}%` }}
                   />
                 </div>
@@ -291,30 +291,30 @@ export const CurrentScanMonitor: React.FC = () => {
                   <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
                     <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-2">
-                        <span className="text-sm sm:text-base font-bold text-slate-900 truncate">
+                        <span className="text-sm sm:text-base font-bold text-white truncate">
                           {competitorName}
                         </span>
                         <a
                           href={job.starting_url}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="inline-flex items-center gap-1 text-xs text-sky-600 hover:text-sky-700 hover:underline max-w-[280px] sm:max-w-md truncate"
+                          className="inline-flex items-center gap-1 text-xs text-cyan-400 hover:text-cyan-300 hover:underline max-w-[280px] sm:max-w-md truncate"
                         >
                           <span className="truncate">{job.starting_url}</span>
                           <ExternalLink className="w-3 h-3 shrink-0" />
                         </a>
                       </div>
 
-                      <div className="flex flex-wrap items-center gap-2.5 mt-1 text-[11px] text-slate-500">
+                      <div className="flex flex-wrap items-center gap-2.5 mt-1 text-[11px] text-slate-400">
                         <div className="inline-flex items-center gap-1 font-mono">
                           <span>Job ID: {jid.slice(-8)}</span>
                           <button
                             onClick={() => handleCopyId(jid)}
-                            className="p-0.5 text-slate-400 hover:text-slate-700 transition-colors"
+                            className="p-0.5 text-slate-400 hover:text-slate-200 transition-colors"
                             title="Copy Job ID"
                           >
                             {copiedId === jid ? (
-                              <Check className="w-3 h-3 text-emerald-600" />
+                              <Check className="w-3 h-3 text-emerald-400" />
                             ) : (
                               <Copy className="w-3 h-3" />
                             )}
@@ -325,10 +325,10 @@ export const CurrentScanMonitor: React.FC = () => {
                             Started: {new Date(job.started_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                           </span>
                         )}
-                        <span className="text-slate-300">•</span>
+                        <span className="text-slate-600">•</span>
                         <span
                           className={`inline-flex items-center gap-1 ${
-                            freshness.isStale ? 'text-amber-600 font-medium' : 'text-slate-500'
+                            freshness.isStale ? 'text-amber-400 font-medium' : 'text-slate-400'
                           }`}
                         >
                           <Clock className="w-3 h-3" />
@@ -338,11 +338,11 @@ export const CurrentScanMonitor: React.FC = () => {
                     </div>
 
                     <div className="flex items-center gap-2 shrink-0 self-start md:self-center">
-                      <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-sky-50 text-sky-700 border border-sky-200 shadow-xs">
-                        <span className="w-2 h-2 rounded-full bg-sky-500 animate-ping" />
+                      <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-cyan-950/80 text-cyan-300 border border-cyan-800/80 shadow-xs">
+                        <span className="w-2 h-2 rounded-full bg-cyan-400 animate-ping" />
                         {formatStageLabel(job.current_stage)}
                       </span>
-                      <span className="px-2.5 py-1 rounded-md text-xs font-bold bg-slate-900 text-white font-mono">
+                      <span className="px-2.5 py-1 rounded-md text-xs font-bold bg-slate-950 text-cyan-400 border border-slate-800 font-mono">
                         {job.progress_pct || 0}%
                       </span>
                     </div>
@@ -350,9 +350,9 @@ export const CurrentScanMonitor: React.FC = () => {
 
                   {/* Visual Progress Bar */}
                   <div className="space-y-1">
-                    <div className="w-full bg-slate-100 rounded-full h-2.5 overflow-hidden">
+                    <div className="w-full bg-slate-800 rounded-full h-2.5 overflow-hidden">
                       <div
-                        className="bg-gradient-to-r from-sky-500 via-blue-600 to-indigo-600 h-2.5 rounded-full transition-all duration-500 ease-out"
+                        className="bg-gradient-to-r from-cyan-500 via-blue-500 to-indigo-600 h-2.5 rounded-full transition-all duration-500 ease-out"
                         style={{ width: `${Math.min(100, Math.max(3, job.progress_pct || 0))}%` }}
                       />
                     </div>
@@ -360,8 +360,8 @@ export const CurrentScanMonitor: React.FC = () => {
 
                   {/* Post-crawl ongoing enrichment indicator */}
                   {isPostCrawlEnrichment && (
-                    <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-indigo-50/70 border border-indigo-200/70 text-indigo-800 text-xs font-medium">
-                      <Sparkles className="w-4 h-4 text-indigo-600 shrink-0 animate-pulse" />
+                    <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-indigo-950/40 border border-indigo-800/60 text-indigo-200 text-xs font-medium">
+                      <Sparkles className="w-4 h-4 text-indigo-400 shrink-0 animate-pulse" />
                       <span>
                         <strong>Crawling finished</strong> — Deep intelligence extraction, entity classification, and CRM enrichment are actively in progress.
                       </span>
@@ -370,73 +370,73 @@ export const CurrentScanMonitor: React.FC = () => {
 
                   {/* Core Crawl & Discovery Metrics Grid */}
                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 text-xs">
-                    <div className="p-2.5 rounded-lg bg-slate-50/80 border border-slate-200/60">
+                    <div className="p-2.5 rounded-lg bg-slate-950/60 border border-slate-800/80">
                       <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 block">
                         Pages Attempted
                       </span>
                       <div className="flex items-baseline gap-1 mt-0.5">
-                        <span className="text-base font-bold text-slate-800">
+                        <span className="text-base font-bold text-white">
                           {job.pages_attempted || 0}
                         </span>
-                        <span className="text-[11px] text-slate-500">
+                        <span className="text-[11px] text-slate-400">
                           / {job.max_pages || 50} limit
                         </span>
                       </div>
-                      <span className="text-[10px] text-slate-500 block mt-0.5">
+                      <span className="text-[10px] text-slate-400 block mt-0.5">
                         {job.pages_discovered || 0} discovered
                       </span>
                     </div>
 
-                    <div className="p-2.5 rounded-lg bg-emerald-50/50 border border-emerald-200/60">
-                      <span className="text-[10px] font-semibold uppercase tracking-wider text-emerald-600 block">
+                    <div className="p-2.5 rounded-lg bg-emerald-950/30 border border-emerald-900/60">
+                      <span className="text-[10px] font-semibold uppercase tracking-wider text-emerald-400 block">
                         Crawled Successfully
                       </span>
-                      <div className="text-base font-bold text-emerald-700 mt-0.5">
+                      <div className="text-base font-bold text-emerald-300 mt-0.5">
                         {job.pages_crawled || 0}
                       </div>
-                      <span className="text-[10px] text-emerald-600/80 block mt-0.5">
+                      <span className="text-[10px] text-emerald-400/80 block mt-0.5">
                         {job.pages_analysed || job.pages_crawled || 0} analysed
                       </span>
                     </div>
 
-                    <div className="p-2.5 rounded-lg bg-slate-50/80 border border-slate-200/60">
+                    <div className="p-2.5 rounded-lg bg-slate-950/60 border border-slate-800/80">
                       <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 block">
                         Failed / Skipped
                       </span>
                       <div className="flex items-baseline gap-1.5 mt-0.5">
-                        <span className="text-base font-bold text-rose-600">
+                        <span className="text-base font-bold text-rose-400">
                           {job.pages_failed || 0}
                         </span>
                         <span className="text-[11px] text-slate-400">failed</span>
-                        <span className="text-slate-300">•</span>
-                        <span className="text-[11px] text-slate-500">
+                        <span className="text-slate-600">•</span>
+                        <span className="text-[11px] text-slate-400">
                           {job.pages_skipped || 0} skipped
                         </span>
                       </div>
                       <span className="text-[10px] text-slate-400 block mt-0.5">Rate & safety bounded</span>
                     </div>
 
-                    <div className="p-2.5 rounded-lg bg-indigo-50/50 border border-indigo-200/60">
-                      <span className="text-[10px] font-semibold uppercase tracking-wider text-indigo-600 block">
+                    <div className="p-2.5 rounded-lg bg-indigo-950/30 border border-indigo-900/60">
+                      <span className="text-[10px] font-semibold uppercase tracking-wider text-indigo-400 block">
                         Discovered Yield
                       </span>
-                      <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 mt-0.5 text-xs font-bold text-indigo-900">
+                      <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 mt-0.5 text-xs font-bold text-indigo-200">
                         <span>{job.contacts_created || 0} contacts</span>
-                        <span className="text-indigo-300">•</span>
+                        <span className="text-indigo-400/60">•</span>
                         <span>{job.companies_created || 0} co.</span>
                       </div>
-                      <span className="text-[10px] text-indigo-700 block mt-0.5">
+                      <span className="text-[10px] text-indigo-300/80 block mt-0.5">
                         {job.references_found || 0} references • {job.leads_created || 0} leads
                       </span>
                     </div>
                   </div>
 
                   {/* Live Activity Timeline (Latest 5–8 Real Persistent Events) */}
-                  <div className="pt-2 border-t border-slate-100">
+                  <div className="pt-2 border-t border-slate-800/80">
                     <div className="flex items-center justify-between mb-2">
                       <div className="flex items-center gap-1.5">
-                        <span className="w-1.5 h-1.5 rounded-full bg-sky-500 animate-ping" />
-                        <h4 className="text-xs font-bold text-slate-800 uppercase tracking-wider">
+                        <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-ping" />
+                        <h4 className="text-xs font-bold text-slate-200 uppercase tracking-wider">
                           Live Activity Log
                         </h4>
                       </div>
@@ -444,7 +444,7 @@ export const CurrentScanMonitor: React.FC = () => {
                     </div>
 
                     {displayedEvents.length === 0 ? (
-                      <div className="p-3 text-center rounded-lg bg-slate-50 text-[11px] text-slate-400 italic">
+                      <div className="p-3 text-center rounded-lg bg-slate-950/50 border border-slate-800/60 text-[11px] text-slate-400 italic">
                         Connecting to persistent event telemetry...
                       </div>
                     ) : (
@@ -453,20 +453,20 @@ export const CurrentScanMonitor: React.FC = () => {
                           const isNewest = idx === 0;
                           const sev = event.severity || 'info';
 
-                          let badgeColor = 'bg-slate-100 text-slate-700 border-slate-200';
+                          let badgeColor = 'bg-slate-800 text-slate-300 border-slate-700';
                           let dotColor = 'bg-slate-400';
                           if (sev === 'success') {
-                            badgeColor = 'bg-emerald-50 text-emerald-700 border-emerald-200';
-                            dotColor = 'bg-emerald-500';
+                            badgeColor = 'bg-emerald-950/60 text-emerald-300 border-emerald-800/60';
+                            dotColor = 'bg-emerald-400';
                           } else if (sev === 'warning') {
-                            badgeColor = 'bg-amber-50 text-amber-700 border-amber-200';
-                            dotColor = 'bg-amber-500';
+                            badgeColor = 'bg-amber-950/60 text-amber-300 border-amber-800/60';
+                            dotColor = 'bg-amber-400';
                           } else if (sev === 'error') {
-                            badgeColor = 'bg-rose-50 text-rose-700 border-rose-200';
-                            dotColor = 'bg-rose-500';
+                            badgeColor = 'bg-rose-950/60 text-rose-300 border-rose-800/60';
+                            dotColor = 'bg-rose-400';
                           } else if (sev === 'info') {
-                            badgeColor = 'bg-sky-50 text-sky-700 border-sky-200';
-                            dotColor = 'bg-sky-500';
+                            badgeColor = 'bg-cyan-950/60 text-cyan-300 border-cyan-800/60';
+                            dotColor = 'bg-cyan-400';
                           }
 
                           const formattedTime = event.event_timestamp
@@ -482,8 +482,8 @@ export const CurrentScanMonitor: React.FC = () => {
                               key={event.id || `${event.event_timestamp}-${idx}`}
                               className={`flex items-start gap-2.5 p-2 rounded-md text-xs transition-colors ${
                                 isNewest
-                                  ? 'bg-slate-50/90 border border-slate-200/80 shadow-2xs'
-                                  : 'hover:bg-slate-50/50'
+                                  ? 'bg-slate-950/90 border border-slate-800 text-slate-200 shadow-xs'
+                                  : 'hover:bg-slate-800/50 text-slate-300'
                               }`}
                             >
                               <div className="pt-0.5 shrink-0">
@@ -500,7 +500,7 @@ export const CurrentScanMonitor: React.FC = () => {
                                 {formatStageLabel(event.stage)}
                               </span>
 
-                              <p className="text-slate-700 leading-snug flex-1 break-words">
+                              <p className="text-slate-200 leading-snug flex-1 break-words">
                                 {event.message}
                               </p>
                             </div>
@@ -518,23 +518,23 @@ export const CurrentScanMonitor: React.FC = () => {
 
       {/* STATE 2: No scan running, but pending jobs exist in queue */}
       {runningJobs.length === 0 && pendingJobs.length > 0 && (
-        <Card className="p-5 border border-slate-200/90 bg-gradient-to-r from-slate-50/60 to-white">
+        <Card className="p-5 border border-slate-800 bg-slate-900 shadow-md">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div className="space-y-1">
-              <div className="flex items-center gap-2">
-                <Clock className="w-4 h-4 text-amber-500" />
-                <h3 className="text-sm font-bold text-slate-900">No scan is currently running.</h3>
-                <span className="px-2 py-0.5 rounded-full text-[11px] font-semibold bg-amber-50 text-amber-700 border border-amber-200">
+              <div className="flex items-center gap-2 flex-wrap">
+                <Clock className="w-4 h-4 text-amber-400" />
+                <h3 className="text-sm font-bold text-white">No scan is currently running.</h3>
+                <span className="px-2 py-0.5 rounded-full text-[11px] font-semibold bg-amber-950/80 text-amber-400 border border-amber-800">
                   {pendingTotal} in queue
                 </span>
               </div>
-              <p className="text-xs text-slate-500">
+              <p className="text-xs text-slate-400">
                 Active crawler workers are currently idle or between domain rate limits.
               </p>
             </div>
 
-            <Link to="/scanner">
-              <Button variant="secondary" size="sm">
+            <Link to="/scanner" className="shrink-0">
+              <Button variant="secondary" size="sm" className="w-full sm:w-auto">
                 View Queue in Scanner
                 <ArrowRight className="w-3.5 h-3.5 ml-1" />
               </Button>
@@ -543,17 +543,17 @@ export const CurrentScanMonitor: React.FC = () => {
 
           {/* Next Queued Competitor Preview */}
           {pendingJobs[0] && (
-            <div className="mt-4 pt-3 border-t border-slate-200/60 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
+            <div className="mt-4 pt-3 border-t border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
               <div className="flex items-center gap-2 min-w-0">
-                <span className="font-semibold text-slate-600 shrink-0">Next Up:</span>
-                <span className="font-bold text-slate-900 truncate">
+                <span className="font-semibold text-slate-400 shrink-0">Next Up:</span>
+                <span className="font-bold text-white truncate">
                   {getCompetitorDisplayName(pendingJobs[0])}
                 </span>
                 <a
                   href={pendingJobs[0].starting_url}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="text-sky-600 hover:underline truncate max-w-xs inline-flex items-center gap-1"
+                  className="text-cyan-400 hover:text-cyan-300 hover:underline truncate max-w-xs inline-flex items-center gap-1"
                 >
                   <span className="truncate">{pendingJobs[0].starting_url}</span>
                   <ExternalLink className="w-3 h-3 shrink-0" />
@@ -567,24 +567,24 @@ export const CurrentScanMonitor: React.FC = () => {
 
       {/* STATE 3: No scan running and no jobs pending (Idle) */}
       {runningJobs.length === 0 && pendingJobs.length === 0 && !isLoading && (
-        <Card className="p-6 border border-slate-200/80 bg-gradient-to-b from-white to-slate-50/50 text-center">
-          <div className="max-w-md mx-auto space-y-2">
-            <div className="w-10 h-10 rounded-full bg-slate-100 text-slate-400 mx-auto flex items-center justify-center">
-              <PlayCircle className="w-5 h-5 text-slate-500" />
+        <Card className="p-6 border border-slate-800 bg-slate-900 text-center shadow-md">
+          <div className="max-w-md mx-auto space-y-3">
+            <div className="w-10 h-10 rounded-full bg-slate-800 text-slate-400 mx-auto flex items-center justify-center border border-slate-700">
+              <PlayCircle className="w-5 h-5 text-slate-300" />
             </div>
-            <h3 className="text-sm font-bold text-slate-900">All research jobs are currently idle.</h3>
-            <p className="text-xs text-slate-500">
+            <h3 className="text-sm font-bold text-white">All research jobs are currently idle.</h3>
+            <p className="text-xs text-slate-400">
               No competitor scans are currently active or queued. Launch a scan on any agency or competitor website to discover clients and contacts.
             </p>
-            <div className="pt-2 flex items-center justify-center gap-2.5">
-              <Link to="/scanner">
-                <Button variant="primary" size="sm">
+            <div className="pt-2 flex flex-col sm:flex-row items-center justify-center gap-2.5">
+              <Link to="/scanner" className="w-full sm:w-auto">
+                <Button variant="primary" size="sm" className="w-full sm:w-auto">
                   <Sparkles className="w-3.5 h-3.5 mr-1" />
                   Start Competitor Scan
                 </Button>
               </Link>
-              <Link to="/lead-generator">
-                <Button variant="secondary" size="sm">
+              <Link to="/lead-generator" className="w-full sm:w-auto">
+                <Button variant="secondary" size="sm" className="w-full sm:w-auto">
                   Launch Lead Generator
                 </Button>
               </Link>

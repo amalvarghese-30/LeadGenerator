@@ -101,22 +101,29 @@ export const Dashboard: React.FC = () => {
   return (
     <div className="space-y-6">
       {/* Header Banner */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <div>
-          <h1 className="text-xl font-bold tracking-tight text-slate-900">Operations Command Center</h1>
-          <p className="text-xs text-slate-500 mt-1">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 bg-slate-900 border border-slate-800 rounded-2xl p-5 sm:p-6 shadow-xl relative overflow-hidden">
+        <div className="absolute top-0 right-0 w-80 h-80 bg-cyan-500/5 rounded-full blur-3xl pointer-events-none" />
+        <div className="relative z-10">
+          <div className="flex items-center gap-2 mb-1">
+            <span className="px-2.5 py-0.5 rounded-full text-[10px] font-mono font-bold bg-cyan-950 text-cyan-400 border border-cyan-800 uppercase tracking-wider">
+              Control Center
+            </span>
+            <span className="text-xs text-slate-400 font-mono">v2.5</span>
+          </div>
+          <h1 className="text-xl sm:text-2xl font-extrabold tracking-tight text-white">Operations Command Center</h1>
+          <p className="text-xs text-slate-400 mt-1 max-w-2xl">
             Real-time pipeline analytics, cross-provider intelligence, and autonomous discovery health.
           </p>
         </div>
-        <div className="flex items-center gap-2">
-          <Link to="/lead-generator">
-            <Button variant="primary" size="sm">
-              <Sparkles className="w-3.5 h-3.5 mr-1.5" />
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5 relative z-10 shrink-0">
+          <Link to="/lead-generator" className="w-full sm:w-auto">
+            <Button variant="primary" size="sm" className="w-full sm:w-auto">
+              <Sparkles className="w-3.5 h-3.5 mr-1.5 text-slate-950" />
               Launch Lead Generator
             </Button>
           </Link>
-          <Link to="/scanner">
-            <Button variant="secondary" size="sm">
+          <Link to="/scanner" className="w-full sm:w-auto">
+            <Button variant="secondary" size="sm" className="w-full sm:w-auto">
               <Globe className="w-3.5 h-3.5 mr-1.5" />
               Scan Website
             </Button>
@@ -128,43 +135,43 @@ export const Dashboard: React.FC = () => {
       <CurrentScanMonitor />
 
       {/* Top Level Metric Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3.5">
-        <Card className="p-4 border-l-4 border-l-blue-600">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 sm:gap-3.5">
+        <Card className="p-3.5 sm:p-4 bg-slate-900 border border-slate-800 border-l-4 border-l-blue-500 shadow-md">
           <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Total Leads</span>
-          <p className="text-xl font-black text-slate-900 mt-1">{displayStats.total_leads}</p>
-          <span className="text-[10px] text-slate-500 mt-0.5 block">{displayStats.new_leads_7d} new past 7 days</span>
+          <p className="text-lg sm:text-2xl font-black text-white mt-1">{displayStats.total_leads}</p>
+          <span className="text-[10px] text-slate-400 mt-0.5 block truncate">{displayStats.new_leads_7d} new past 7 days</span>
         </Card>
 
-        <Card className="p-4 border-l-4 border-l-emerald-600">
+        <Card className="p-3.5 sm:p-4 bg-slate-900 border border-slate-800 border-l-4 border-l-emerald-500 shadow-md">
           <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Contacts</span>
-          <p className="text-xl font-black text-emerald-600 mt-1">{displayStats.total_contacts}</p>
-          <span className="text-[10px] text-slate-500 mt-0.5 block">Verified profiles</span>
+          <p className="text-lg sm:text-2xl font-black text-emerald-400 mt-1">{displayStats.total_contacts}</p>
+          <span className="text-[10px] text-slate-400 mt-0.5 block truncate">Verified profiles</span>
         </Card>
 
-        <Card className="p-4 border-l-4 border-l-indigo-600">
+        <Card className="p-3.5 sm:p-4 bg-slate-900 border border-slate-800 border-l-4 border-l-indigo-500 shadow-md">
           <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Companies</span>
-          <p className="text-xl font-black text-indigo-600 mt-1">{displayStats.total_companies}</p>
-          <span className="text-[10px] text-slate-500 mt-0.5 block">Unique organizations</span>
+          <p className="text-lg sm:text-2xl font-black text-indigo-400 mt-1">{displayStats.total_companies}</p>
+          <span className="text-[10px] text-slate-400 mt-0.5 block truncate">Unique organizations</span>
         </Card>
 
-        <Card className="p-4 border-l-4 border-l-purple-600">
+        <Card className="p-3.5 sm:p-4 bg-slate-900 border border-slate-800 border-l-4 border-l-purple-500 shadow-md">
           <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Providers</span>
-          <p className="text-xl font-black text-purple-600 mt-1">{displayStats.total_providers}</p>
-          <span className="text-[10px] text-slate-500 mt-0.5 block">{displayStats.verified_providers} verified</span>
+          <p className="text-lg sm:text-2xl font-black text-purple-400 mt-1">{displayStats.total_providers}</p>
+          <span className="text-[10px] text-slate-400 mt-0.5 block truncate">{displayStats.verified_providers} verified</span>
         </Card>
 
-        <Card className="p-4 border-l-4 border-l-amber-600">
+        <Card className="p-3.5 sm:p-4 bg-slate-900 border border-slate-800 border-l-4 border-l-amber-500 shadow-md">
           <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Outreach Ready</span>
-          <p className="text-xl font-black text-amber-600 mt-1">{displayStats.outreach_ready_leads}</p>
-          <span className="text-[10px] text-slate-500 mt-0.5 block">{displayStats.follow_ups_due} follow-ups</span>
+          <p className="text-lg sm:text-2xl font-black text-amber-400 mt-1">{displayStats.outreach_ready_leads}</p>
+          <span className="text-[10px] text-slate-400 mt-0.5 block truncate">{displayStats.follow_ups_due} follow-ups</span>
         </Card>
 
-        <Card className="p-4 border-l-4 border-l-sky-600">
+        <Card className="p-3.5 sm:p-4 bg-slate-900 border border-slate-800 border-l-4 border-l-cyan-500 shadow-md">
           <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Queue & Discovery</span>
-          <p className="text-xl font-black text-sky-600 mt-1">
+          <p className="text-lg sm:text-2xl font-black text-cyan-400 mt-1">
             {displayStats.pending_crawl_jobs ?? 0}
           </p>
-          <span className="text-[10px] text-sky-700 mt-0.5 block">
+          <span className="text-[10px] text-cyan-300 mt-0.5 block truncate">
             Pending research jobs
           </span>
         </Card>
@@ -172,73 +179,74 @@ export const Dashboard: React.FC = () => {
 
       {/* Intelligence Modules Fast Jump Grid */}
       <div>
-        <h2 className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-3">
+        <h2 className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-3 flex items-center gap-2">
+          <Layers className="w-3.5 h-3.5 text-cyan-400" />
           Intelligence & Discovery Workspaces
         </h2>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
           <Link to="/lead-generator" className="group">
-            <Card className="p-4 h-full border border-slate-200/80 hover:border-blue-400 hover:shadow-md transition-all">
-              <div className="flex items-center justify-between mb-2">
-                <div className="w-8 h-8 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center">
+            <Card className="p-4 h-full bg-slate-900 border border-slate-800 hover:border-cyan-500/60 hover:bg-slate-850 hover:shadow-lg hover:shadow-cyan-500/5 transition-all">
+              <div className="flex items-center justify-between mb-2.5">
+                <div className="w-8 h-8 rounded-xl bg-cyan-950 text-cyan-400 border border-cyan-800 flex items-center justify-center group-hover:scale-105 transition-transform">
                   <Sparkles className="w-4 h-4" />
                 </div>
-                <ArrowUpRight className="w-4 h-4 text-slate-400 group-hover:text-blue-600 transition-colors" />
+                <ArrowUpRight className="w-4 h-4 text-slate-500 group-hover:text-cyan-400 transition-colors" />
               </div>
-              <h3 className="text-xs font-bold text-slate-900 group-hover:text-blue-600 transition-colors">
+              <h3 className="text-xs font-bold text-white group-hover:text-cyan-400 transition-colors">
                 Lead Generator
               </h3>
-              <p className="text-[11px] text-slate-500 mt-1 leading-relaxed">
+              <p className="text-[11px] text-slate-400 mt-1 leading-relaxed">
                 Company & individual search with entity classification and direct CRM saving.
               </p>
             </Card>
           </Link>
 
           <Link to="/auto-profile-creator" className="group">
-            <Card className="p-4 h-full border border-slate-200/80 hover:border-indigo-400 hover:shadow-md transition-all">
-              <div className="flex items-center justify-between mb-2">
-                <div className="w-8 h-8 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center">
+            <Card className="p-4 h-full bg-slate-900 border border-slate-800 hover:border-indigo-500/60 hover:bg-slate-850 hover:shadow-lg hover:shadow-indigo-500/5 transition-all">
+              <div className="flex items-center justify-between mb-2.5">
+                <div className="w-8 h-8 rounded-xl bg-indigo-950 text-indigo-400 border border-indigo-800 flex items-center justify-center group-hover:scale-105 transition-transform">
                   <UserCheck className="w-4 h-4" />
                 </div>
-                <ArrowUpRight className="w-4 h-4 text-slate-400 group-hover:text-indigo-600 transition-colors" />
+                <ArrowUpRight className="w-4 h-4 text-slate-500 group-hover:text-indigo-400 transition-colors" />
               </div>
-              <h3 className="text-xs font-bold text-slate-900 group-hover:text-indigo-600 transition-colors">
+              <h3 className="text-xs font-bold text-white group-hover:text-indigo-400 transition-colors">
                 Auto Profile Creator
               </h3>
-              <p className="text-[11px] text-slate-500 mt-1 leading-relaxed">
+              <p className="text-[11px] text-slate-400 mt-1 leading-relaxed">
                 Cross-platform executive profile synthesis with corroborated identity evidence.
               </p>
             </Card>
           </Link>
 
           <Link to="/scanner" className="group">
-            <Card className="p-4 h-full border border-slate-200/80 hover:border-purple-400 hover:shadow-md transition-all">
-              <div className="flex items-center justify-between mb-2">
-                <div className="w-8 h-8 rounded-xl bg-purple-50 text-purple-600 flex items-center justify-center">
+            <Card className="p-4 h-full bg-slate-900 border border-slate-800 hover:border-purple-500/60 hover:bg-slate-850 hover:shadow-lg hover:shadow-purple-500/5 transition-all">
+              <div className="flex items-center justify-between mb-2.5">
+                <div className="w-8 h-8 rounded-xl bg-purple-950 text-purple-400 border border-purple-800 flex items-center justify-center group-hover:scale-105 transition-transform">
                   <Radar className="w-4 h-4" />
                 </div>
-                <ArrowUpRight className="w-4 h-4 text-slate-400 group-hover:text-purple-600 transition-colors" />
+                <ArrowUpRight className="w-4 h-4 text-slate-500 group-hover:text-purple-400 transition-colors" />
               </div>
-              <h3 className="text-xs font-bold text-slate-900 group-hover:text-purple-600 transition-colors">
+              <h3 className="text-xs font-bold text-white group-hover:text-purple-400 transition-colors">
                 Competitor Intelligence
               </h3>
-              <p className="text-[11px] text-slate-500 mt-1 leading-relaxed">
+              <p className="text-[11px] text-slate-400 mt-1 leading-relaxed">
                 Scan provider competitors, discover client references, and monitor services.
               </p>
             </Card>
           </Link>
 
           <Link to="/providers" className="group">
-            <Card className="p-4 h-full border border-slate-200/80 hover:border-emerald-400 hover:shadow-md transition-all">
-              <div className="flex items-center justify-between mb-2">
-                <div className="w-8 h-8 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center">
+            <Card className="p-4 h-full bg-slate-900 border border-slate-800 hover:border-emerald-500/60 hover:bg-slate-850 hover:shadow-lg hover:shadow-emerald-500/5 transition-all">
+              <div className="flex items-center justify-between mb-2.5">
+                <div className="w-8 h-8 rounded-xl bg-emerald-950 text-emerald-400 border border-emerald-800 flex items-center justify-center group-hover:scale-105 transition-transform">
                   <Building2 className="w-4 h-4" />
                 </div>
-                <ArrowUpRight className="w-4 h-4 text-slate-400 group-hover:text-emerald-600 transition-colors" />
+                <ArrowUpRight className="w-4 h-4 text-slate-500 group-hover:text-emerald-400 transition-colors" />
               </div>
-              <h3 className="text-xs font-bold text-slate-900 group-hover:text-emerald-600 transition-colors">
+              <h3 className="text-xs font-bold text-white group-hover:text-emerald-400 transition-colors">
                 Scanned Providers
               </h3>
-              <p className="text-[11px] text-slate-500 mt-1 leading-relaxed">
+              <p className="text-[11px] text-slate-400 mt-1 leading-relaxed">
                 Audit crawled provider domains, verify discovery status, and review extracted metrics.
               </p>
             </Card>
@@ -247,29 +255,29 @@ export const Dashboard: React.FC = () => {
       </div>
 
       {/* Visual Analytics */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 sm:gap-6">
         {/* Pipeline Stage Distribution */}
         <div className="lg:col-span-8">
-          <Card className="p-5 h-full">
+          <Card className="p-4 sm:p-5 h-full bg-slate-900 border border-slate-800 shadow-md">
             <div className="flex items-center justify-between mb-4">
-              <h2 className="text-sm font-bold text-slate-900">Lead Pipeline Distribution</h2>
-              <Link to="/leads" className="text-xs font-semibold text-blue-600 hover:underline">
+              <h2 className="text-sm font-bold text-white">Lead Pipeline Distribution</h2>
+              <Link to="/leads" className="text-xs font-semibold text-cyan-400 hover:text-cyan-300 hover:underline">
                 View CRM Leads
               </Link>
             </div>
             {stageData.length === 0 ? (
-              <div className="h-60 flex items-center justify-center text-xs text-slate-400">
+              <div className="h-60 flex items-center justify-center text-xs text-slate-500">
                 No active leads in pipeline yet.
               </div>
             ) : (
               <div className="h-60 w-full">
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={stageData} margin={{ top: 10, right: 10, left: -20, bottom: 20 }}>
-                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                    <XAxis dataKey="name" tick={{ fontSize: 10, fill: '#64748b' }} interval={0} angle={-15} textAnchor="end" />
-                    <YAxis tick={{ fontSize: 10, fill: '#64748b' }} />
-                    <Tooltip contentStyle={{ borderRadius: 12, fontSize: 12, border: '1px solid #e2e8f0' }} />
-                    <Bar dataKey="count" fill="#2563eb" radius={[4, 4, 0, 0]} />
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#1e293b" />
+                    <XAxis dataKey="name" tick={{ fontSize: 10, fill: '#94a3b8' }} interval={0} angle={-15} textAnchor="end" />
+                    <YAxis tick={{ fontSize: 10, fill: '#94a3b8' }} />
+                    <Tooltip contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', color: '#f8fafc', borderRadius: 12, fontSize: 12 }} />
+                    <Bar dataKey="count" fill="#38bdf8" radius={[4, 4, 0, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
               </div>
@@ -279,16 +287,16 @@ export const Dashboard: React.FC = () => {
 
         {/* Category Share */}
         <div className="lg:col-span-4">
-          <Card className="p-5 h-full flex flex-col justify-between">
+          <Card className="p-4 sm:p-5 h-full flex flex-col justify-between bg-slate-900 border border-slate-800 shadow-md">
             <div>
               <div className="flex items-center justify-between mb-4">
-                <h2 className="text-sm font-bold text-slate-900">Provider Categories</h2>
-                <Link to="/providers" className="text-xs font-semibold text-blue-600 hover:underline">
+                <h2 className="text-sm font-bold text-white">Provider Categories</h2>
+                <Link to="/providers" className="text-xs font-semibold text-cyan-400 hover:text-cyan-300 hover:underline">
                   All Providers
                 </Link>
               </div>
               {categoryData.length === 0 ? (
-                <div className="h-48 flex items-center justify-center text-xs text-slate-400">
+                <div className="h-48 flex items-center justify-center text-xs text-slate-500">
                   No providers categorized yet.
                 </div>
               ) : (
@@ -306,14 +314,14 @@ export const Dashboard: React.FC = () => {
                           <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                         ))}
                       </Pie>
-                      <Tooltip contentStyle={{ borderRadius: 12, fontSize: 12, border: '1px solid #e2e8f0' }} />
+                      <Tooltip contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', color: '#f8fafc', borderRadius: 12, fontSize: 12 }} />
                     </PieChart>
                   </ResponsiveContainer>
                 </div>
               )}
             </div>
 
-            <div className="space-y-1.5 pt-3 border-t border-slate-100">
+            <div className="space-y-1.5 pt-3 border-t border-slate-800">
               {categoryData.slice(0, 4).map((c, i) => (
                 <div key={c.name} className="flex items-center justify-between text-xs">
                   <div className="flex items-center gap-2">
@@ -321,9 +329,9 @@ export const Dashboard: React.FC = () => {
                       className="w-2.5 h-2.5 rounded-full shrink-0"
                       style={{ backgroundColor: COLORS[i % COLORS.length] }}
                     />
-                    <span className="text-slate-600 capitalize">{c.name}</span>
+                    <span className="text-slate-300 capitalize">{c.name}</span>
                   </div>
-                  <span className="font-bold text-slate-800">{c.value}</span>
+                  <span className="font-bold text-white">{c.value}</span>
                 </div>
               ))}
             </div>
@@ -332,28 +340,28 @@ export const Dashboard: React.FC = () => {
       </div>
 
       {/* Recent Intelligence Jobs */}
-      <Card className="p-5">
+      <Card className="p-4 sm:p-5 bg-slate-900 border border-slate-800 shadow-md">
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-2">
-            <Activity className="w-4 h-4 text-blue-600" />
-            <h2 className="text-sm font-bold text-slate-900">Recent Intelligence Scans</h2>
+            <Activity className="w-4 h-4 text-cyan-400" />
+            <h2 className="text-sm font-bold text-white">Recent Intelligence Scans</h2>
           </div>
-          <Link to="/website-intelligence" className="text-xs font-semibold text-blue-600 hover:underline">
+          <Link to="/website-intelligence" className="text-xs font-semibold text-cyan-400 hover:text-cyan-300 hover:underline">
             All Scans
           </Link>
         </div>
 
         {recentJobs.length === 0 ? (
-          <div className="py-6 text-center text-xs text-slate-400">
+          <div className="py-6 text-center text-xs text-slate-500">
             No intelligence scans executed yet. Start one from Website Intelligence.
           </div>
         ) : (
-          <div className="divide-y divide-slate-100">
+          <div className="divide-y divide-slate-800/80">
             {recentJobs.map((j) => (
-              <div key={j.id} className="py-3 flex items-center justify-between gap-4">
-                <div className="min-w-0">
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs font-bold text-slate-900 font-mono truncate">
+              <div key={j.id} className="py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 sm:gap-4">
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-xs font-bold text-white font-mono truncate max-w-full">
                       {j.starting_url}
                     </span>
                     <Badge
@@ -370,16 +378,16 @@ export const Dashboard: React.FC = () => {
                       {j.status.replace(/_/g, ' ')}
                     </Badge>
                   </div>
-                  <p className="text-[11px] text-slate-500 mt-0.5">
+                  <p className="text-[11px] text-slate-400 mt-1">
                     {j.pages_crawled} crawled • {j.references_found} references • {j.leads_created} leads •{' '}
                     {new Date(j.created_at).toLocaleDateString()}
                   </p>
                 </div>
 
-                <div className="flex items-center gap-2 shrink-0">
+                <div className="flex items-center gap-2 shrink-0 self-start sm:self-center">
                   {j.status.startsWith('completed') && (
-                    <Link to={`/reports/${j.id}`}>
-                      <Button variant="secondary" size="sm">
+                    <Link to={`/reports/${j.id}`} className="w-full sm:w-auto">
+                      <Button variant="secondary" size="sm" className="w-full sm:w-auto">
                         View Report
                       </Button>
                     </Link>
